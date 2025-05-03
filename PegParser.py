@@ -135,7 +135,7 @@ Tests:
 Test passed.
 """
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 __author__ = "Maurice Lambert"
 __author_email__ = "mauricelambert434@gmail.com"
 __maintainer__ = "Maurice Lambert"
@@ -148,7 +148,17 @@ base85...
 """
 __url__ = "https://github.com/mauricelambert/PegParser"
 
-# __all__ = []
+__all__ = [
+    "HttpResponse",
+    "HttpRequest",
+    "MatchList",
+    "PegParser",
+    "StandardMatch",
+    "StandardRules",
+    "get_matchs",
+    "parse_http_request",
+    "parse_http_response",
+]
 
 __license__ = "GPL-3.0 License"
 __copyright__ = """
