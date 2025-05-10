@@ -1,4 +1,4 @@
-![PegParser Logo](https://mauricelambert.github.io/info/python/security/PegParser_small.png "PegParser logo")
+![PegParser Logo](https://mauricelambert.github.io/info/python/code/PegParser_small.png "PegParser logo")
 
 # PegParser
 
@@ -7,9 +7,9 @@
 This package implements a PEG (Parsing Expression Grammar) to parse
 syntax, i add rules to parse URL, HTTP request and response easily
 with security and some format like hexadecimal, base32, base64,
-base85...
+base85, CSV, JSON (strict and permissive)...
 
-> This module implements standard functions for a PEG Parser, *standard match* (like digit, hexadecimal, letter, upper case letter, lower case letter, ...), *standard rules* (like integer, float, string, ...), *standard formats* (like hexadecimal data, base64 data, ...), *network* formats (like IPv4, IPv6, hostname, ...), a full URL parser and a full HTTP parser (request and response).
+> This module implements standard functions for a PEG Parser, *standard match* (like digit, hexadecimal, letter, upper case letter, lower case letter, ...), *standard rules* (like integer, float, string, ...), *standard formats* (like hexadecimal data, base64 data, ...), *network* formats (like IPv4, IPv6, hostname, ...), a full URL parser, a full HTTP parser (request and response), a full CSV parser and PEG rules to parse JSON (strict and permissive).
 
 ## Requirements
 
@@ -54,6 +54,17 @@ python3 -m pip install .
 
 ## Usages
 
+### Command line
+
+```bash
+PegParser              # Using CLI package executable
+python3 -m PegParser   # Using python module
+python3 PegParser.pyz  # Using python executable
+PegParser.exe          # Using python Windows executable
+```
+
+### Python script
+
 ```python
 from PegParser import *
 
@@ -95,13 +106,29 @@ def digits(data, position):
 position, data = digits(b'01234', 0)          # match: 01234
 position, data = digits(b'\x0001234toto', 0)  # no match
 position, data = digits(b'\x0001234toto', 1)  # match: 01234
+
+with open('data.csv', 'rb') as file:
+    for line in csv_file_parse(file):
+        field1 = line[0]
+        field2 = line[1]
+        ...
+
+data = b'{"1": null, "2" : 1.5 , "3": {"test": true, "1": 2}, "4": [1, 2, false]}'
+position, matchs = StandardRules.Json.full(data)
+if matchs is not None and position == len(data):
+    get_ordered_matchs(matchs)
+
+data = b'{"1" null, "2" : 1.5 , "3": {"test" true "1" 2},"4" :[1 2, false],}'
+position, matchs = StandardRules.Json.permissive_full(data)
+if matchs is not None and position == len(data):
+    get_ordered_matchs(matchs)
 ```
 
 ## Links
 
  - [Pypi](https://pypi.org/project/PegParser)
  - [Github](https://github.com/mauricelambert/PegParser)
- - [Documentation](https://mauricelambert.github.io/info/python/security/PegParser.html)
+ - [Documentation](https://mauricelambert.github.io/info/python/code/PegParser.html)
 
 ## License
 
