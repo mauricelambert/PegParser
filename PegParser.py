@@ -32,7 +32,7 @@ Tests:
 ~# python3 -m doctest PegParser.py
 ~# python3 -m doctest -v PegParser.py
 
-39 items had no tests:
+43 items had no tests:
     PegParser
     PegParser.HttpRequest
     PegParser.HttpRequest.__eq__
@@ -59,6 +59,10 @@ Tests:
     PegParser.StandardRules.Format
     PegParser.StandardRules.Http
     PegParser.StandardRules.Json
+    PegParser.StandardRules.Json._end_dict
+    PegParser.StandardRules.Json._end_list
+    PegParser.StandardRules.Json._start_dict
+    PegParser.StandardRules.Json._start_list
     PegParser.StandardRules.Network
     PegParser.StandardRules.Types
     PegParser.StandardRules.Url
@@ -72,7 +76,7 @@ Tests:
     PegParser.StandardRules.Url._optional_characters_subdelims_colon_commat_slot_quest
     PegParser.get_http_content
     PegParser.match_getter
-87 items passed all tests:
+90 items passed all tests:
    3 tests in PegParser.HttpRequest.__bytes__
    3 tests in PegParser.HttpResponse.__bytes__
    3 tests in PegParser.StandardMatch.is_blank
@@ -153,19 +157,22 @@ Tests:
    4 tests in PegParser.StandardRules.Url.path_rootless
    9 tests in PegParser.StandardRules.Url.query
    6 tests in PegParser.StandardRules.Url.scheme
-   2 tests in PegParser.csv_file_parse
+   3 tests in PegParser.csv_file_parse
    2 tests in PegParser.csv_files_parse
    1 tests in PegParser.csv_parse
+   2 tests in PegParser.get_json
+   1 tests in PegParser.get_json_from_ordered_matchs
    2 tests in PegParser.get_matchs
    2 tests in PegParser.get_ordered_matchs
+   3 tests in PegParser.mjson_file_parse
    1 tests in PegParser.parse_http_request
    1 tests in PegParser.parse_http_response
-453 tests in 126 items.
-453 passed and 0 failed.
+460 tests in 133 items.
+460 passed and 0 failed.
 Test passed.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 __author__ = "Maurice Lambert"
 __author_email__ = "mauricelambert434@gmail.com"
 __maintainer__ = "Maurice Lambert"
@@ -196,6 +203,7 @@ from typing import Callable, List, Iterable, Union, Tuple, Dict
 from collections import defaultdict
 from dataclasses import dataclass
 from _io import _BufferedIOBase
+from codecs import decode
 
 
 @dataclass
@@ -756,11 +764,16 @@ class StandardRules:
             >>>
             """
 
-            return PegParser.one_or_more(
+            result = PegParser.one_or_more(
                 StandardMatch.is_digit,
                 data,
                 position,
             )
+
+            if isinstance(result[1], MatchList):
+                result[1]._match_name = "digits"
+
+            return result
 
         def float(
             data: bytes, position: int = 0
@@ -783,7 +796,7 @@ class StandardRules:
             >>>
             """
 
-            return PegParser.sequence(
+            result = PegParser.sequence(
                 [
                     StandardRules.Types.digits,
                     StandardMatch.check_char(46),
@@ -792,6 +805,11 @@ class StandardRules:
                 data,
                 position,
             )
+
+            if isinstance(result[1], MatchList):
+                result[1]._match_name = "float"
+
+            return result
 
         def bool(
             data: bytes, position: int = 0
@@ -814,7 +832,7 @@ class StandardRules:
             >>>
             """
 
-            return PegParser.ordered_choice(
+            result = PegParser.ordered_choice(
                 [
                     lambda d, p: PegParser.sequence(
                         [
@@ -842,6 +860,11 @@ class StandardRules:
                 position,
             )
 
+            if isinstance(result[1], MatchList):
+                result[1]._match_name = "bool"
+
+            return result
+
         def hex_integer(
             data: bytes, position: int = 0
         ) -> Tuple[int, Union[None, Iterable[bytes]]]:
@@ -861,7 +884,7 @@ class StandardRules:
             >>>
             """
 
-            return PegParser.sequence(
+            result = PegParser.sequence(
                 [
                     StandardMatch.check_char(48),
                     StandardMatch.or_check_chars(88, 120),
@@ -870,6 +893,11 @@ class StandardRules:
                 data,
                 position,
             )
+
+            if isinstance(result[1], MatchList):
+                result[1]._match_name = "hex_integer"
+
+            return result
 
         def octal_integer(
             data: bytes, position: int = 0
@@ -896,7 +924,7 @@ class StandardRules:
             >>>
             """
 
-            return PegParser.sequence(
+            result = PegParser.sequence(
                 [
                     StandardMatch.check_char(48),
                     StandardMatch.or_check_chars(79, 111),
@@ -905,6 +933,11 @@ class StandardRules:
                 data,
                 position,
             )
+
+            if isinstance(result[1], MatchList):
+                result[1]._match_name = "octal_integer"
+
+            return result
 
         def string(data: bytes, position: int = 0):
             """
@@ -1132,7 +1165,7 @@ class StandardRules:
                     position,
                 )
 
-            return PegParser.ordered_choice(
+            result = PegParser.ordered_choice(
                 [
                     string_format1,
                     string_format2,
@@ -1140,6 +1173,11 @@ class StandardRules:
                 data,
                 position,
             )
+
+            if isinstance(result[1], MatchList):
+                result[1]._match_name = "strings"
+
+            return result
 
     class Format:
         """
@@ -4171,18 +4209,38 @@ class StandardRules:
                 position,
             )
 
+        def _start_list(data: bytes, position: int):
+            result = StandardMatch.check_char(91)(data, position)
+
+            if result[1]:
+                match = MatchList((result[1],))
+                result = (result[0], match)
+                match._match_name = "start_list"
+
+            return result
+
+        def _end_list(data: bytes, position: int):
+            result = StandardMatch.check_char(93)(data, position)
+
+            if result[1]:
+                match = MatchList((result[1],))
+                result = (result[0], match)
+                match._match_name = "end_list"
+
+            return result
+
         def list(data: bytes, position: int = 0) -> Tuple[int, Union[None, List]]:
             '''
             This function checks for strict JSON list.
 
             >>> StandardRules.Json.list(b'[]')
-            (2, [b'[', [], b']'])
+            (2, [[b'['], [], [b']']])
             >>> StandardRules.Json.list(b'[ ]')
-            (3, [b'[', [b' '], b']'])
+            (3, [[b'['], [b' '], [b']']])
             >>> StandardRules.Json.list(b'[null]')
-            (6, [b'[', [], [], [], [b'n', b'u', b'l', b'l'], [], b']'])
+            (6, [[b'['], [], [], [], [b'n', b'u', b'l', b'l'], [], [b']']])
             >>> StandardRules.Json.list(b'[1, 1.5, 2 , "test", true, [false, null], {"test": 1, "1": null}]')
-            (65, [b'[', [], [[[b'1'], [], b',', [b' ']], [[[b'1'], b'.', [b'5']], [], b',', [b' ']], [[b'2'], [b' '], b',', [b' ']], [[b'"', [b't', b'e', b's', b't'], b'"'], [], b',', [b' ']], [[b't', b'r', b'u', b'e'], [], b',', [b' ']], [[b'[', [], [[[b'f', b'a', b'l', b's', b'e'], [], b',', [b' ']]], [], [b'n', b'u', b'l', b'l'], [], b']'], [], b',', [b' ']]], [], [b'{', [], [[[[b'"', [b't', b'e', b's', b't'], b'"'], [], b':', [b' '], [b'1'], []], b',', [b' ']]], [], [[b'"', [b'1'], b'"'], [], b':', [b' '], [b'n', b'u', b'l', b'l'], []], [], b'}'], [], b']'])
+            (65, [[b'['], [], [[[b'1'], [], b',', [b' ']], [[[b'1'], b'.', [b'5']], [], b',', [b' ']], [[b'2'], [b' '], b',', [b' ']], [[b'"', [b't', b'e', b's', b't'], b'"'], [], b',', [b' ']], [[b't', b'r', b'u', b'e'], [], b',', [b' ']], [[[b'['], [], [[[b'f', b'a', b'l', b's', b'e'], [], b',', [b' ']]], [], [b'n', b'u', b'l', b'l'], [], [b']']], [], b',', [b' ']]], [], [[b'{'], [], [[[[b'"', [b't', b'e', b's', b't'], b'"'], [], b':', [b' '], [b'1'], []], b',', [b' ']]], [], [[b'"', [b'1'], b'"'], [], b':', [b' '], [b'n', b'u', b'l', b'l'], []], [], [b'}']], [], [b']']])
             >>> StandardRules.Json.list(b'[')
             (0, None)
             >>> StandardRules.Json.list(b'[1,]')
@@ -4214,13 +4272,13 @@ class StandardRules:
             def list_non_empty(data: bytes, position: int):
                 return PegParser.sequence(
                     [
-                        StandardMatch.check_char(91),
+                        StandardRules.Json._start_list,
                         StandardRules.Format.optional_blanks,
                         list_values,
                         StandardRules.Format.optional_blanks,
                         StandardRules.Json.full,
                         StandardRules.Format.optional_blanks,
-                        StandardMatch.check_char(93),
+                        StandardRules.Json._end_list,
                     ],
                     data,
                     position,
@@ -4229,9 +4287,9 @@ class StandardRules:
             def list_empty(data: bytes, position: int):
                 return PegParser.sequence(
                     [
-                        StandardMatch.check_char(91),
+                        StandardRules.Json._start_list,
                         StandardRules.Format.optional_blanks,
-                        StandardMatch.check_char(93),
+                        StandardRules.Json._end_list,
                     ],
                     data,
                     position,
@@ -4257,19 +4315,19 @@ class StandardRules:
             (trailing comma, forgot comma, ...).
 
             >>> StandardRules.Json.permissive_list(b'[]')
-            (2, [b'[', [], [], b']'])
+            (2, [[b'['], [], [], [b']']])
             >>> StandardRules.Json.permissive_list(b'[ ]')
-            (3, [b'[', [b' '], [], b']'])
+            (3, [[b'['], [b' '], [], [b']']])
             >>> StandardRules.Json.permissive_list(b'[uNdefIned]')
-            (11, [b'[', [], [], [], [b'u', b'N', b'd', b'e', b'f', b'I', b'n', b'e', b'd'], [], b']'])
-            >>> StandardRules.Json.permissive_list(b'[1 1.5,2 , "test" trUE,, , , FalSe,   nil]')
-            (42, [b'[', [], [[[b'1'], [[b' ']]], [[[b'1'], b'.', [b'5']], [b',']], [[b'2'], [[b' '], b',', [b' ']]], [[b'"', [b't', b'e', b's', b't'], b'"'], [[b' ']]], [[b't', b'r', b'U', b'E'], [b',', b',', [b' '], b',', [b' '], b',', [b' ']]], [[b'F', b'a', b'l', b'S', b'e'], [b',', [b' ', b' ', b' ']]]], [], [b'n', b'i', b'l'], [], b']'])
+            (11, [[b'['], [], [], [], [b'u', b'N', b'd', b'e', b'f', b'I', b'n', b'e', b'd'], [], [b']']])
+            >>> StandardRules.Json.permissive_list(b'[1 1.5,2 , "test" trUE,, , , FalSe,   nil,, {"test" fAlSe trUE nuLl} ,,,, ]')
+            (75, [[b'['], [], [[[b'1'], [[b' ']]], [[[b'1'], b'.', [b'5']], [b',']], [[b'2'], [[b' '], b',', [b' ']]], [[b'"', [b't', b'e', b's', b't'], b'"'], [[b' ']]], [[b't', b'r', b'U', b'E'], [b',', b',', [b' '], b',', [b' '], b',', [b' ']]], [[b'F', b'a', b'l', b'S', b'e'], [b',', [b' ', b' ', b' ']]], [[b'n', b'i', b'l'], [b',', b',', [b' ']]], [[[b'{'], [], [[[[b'"', [b't', b'e', b's', b't'], b'"'], [[b' ']], [b'f', b'A', b'l', b'S', b'e']], [[b' ']]]], [], [[b't', b'r', b'U', b'E'], [[b' ']], [b'n', b'u', b'L', b'l']], [], [b'}']], [[b' '], b',', b',', b',', b',', [b' ']]]], [b']']])
             >>> StandardRules.Json.permissive_list(b'[')
             (0, None)
             >>> StandardRules.Json.permissive_list(b'[1,]')
-            (4, [b'[', [], [[[b'1'], [b',']]], b']'])
+            (4, [[b'['], [], [[[b'1'], [b',']]], [b']']])
             >>> StandardRules.Json.permissive_list(b'[1 noNe]')
-            (8, [b'[', [], [[[b'1'], [[b' ']]]], [], [b'n', b'o', b'N', b'e'], [], b']'])
+            (8, [[b'['], [], [[[b'1'], [[b' ']]]], [], [b'n', b'o', b'N', b'e'], [], [b']']])
             >>> 
             """
 
@@ -4293,7 +4351,7 @@ class StandardRules:
             def list_value(data: bytes, position: int):
                 return PegParser.sequence(
                     [
-                        StandardRules.Json.permissive_simple_value,
+                        StandardRules.Json.permissive_full,
                         separators,
                     ],
                     data,
@@ -4310,13 +4368,13 @@ class StandardRules:
             def strict_list(data: bytes, position: int):
                 return PegParser.sequence(
                     [
-                        StandardMatch.check_char(91),
+                        StandardRules.Json._start_list,
                         StandardRules.Format.optional_blanks,
                         list_values,
                         StandardRules.Format.optional_blanks,
-                        StandardRules.Json.permissive_simple_value,
+                        StandardRules.Json.permissive_full,
                         StandardRules.Format.optional_blanks,
-                        StandardMatch.check_char(93),
+                        StandardRules.Json._end_list,
                     ],
                     data,
                     position,
@@ -4325,10 +4383,10 @@ class StandardRules:
             def flex_list(data: bytes, position: int):
                 return PegParser.sequence(
                     [
-                        StandardMatch.check_char(91),
+                        StandardRules.Json._start_list,
                         StandardRules.Format.optional_blanks,
                         list_values,
-                        StandardMatch.check_char(93),
+                        StandardRules.Json._end_list,
                     ],
                     data,
                     position,
@@ -4348,16 +4406,36 @@ class StandardRules:
 
             return result
 
+        def _start_dict(data: bytes, position: int):
+            result = StandardMatch.check_char(123)(data, position)
+
+            if result[1]:
+                match = MatchList((result[1],))
+                result = (result[0], match)
+                match._match_name = "start_dict"
+
+            return result
+
+        def _end_dict(data: bytes, position: int):
+            result = StandardMatch.check_char(125)(data, position)
+
+            if result[1]:
+                match = MatchList((result[1],))
+                result = (result[0], match)
+                match._match_name = "end_dict"
+
+            return result
+
         def dict(data: bytes, position: int = 0) -> Tuple[int, Union[None, List]]:
             """
             This function checks for strict JSON dict.
 
             >>> StandardRules.Json.dict(b'{"1": null}')
-            (11, [b'{', [], [], [], [[b'"', [b'1'], b'"'], [], b':', [b' '], [b'n', b'u', b'l', b'l'], []], [], b'}'])
+            (11, [[b'{'], [], [], [], [[b'"', [b'1'], b'"'], [], b':', [b' '], [b'n', b'u', b'l', b'l'], []], [], [b'}']])
             >>> StandardRules.Json.dict(b'{"1": null, "2": true}')
-            (22, [b'{', [], [[[[b'"', [b'1'], b'"'], [], b':', [b' '], [b'n', b'u', b'l', b'l'], []], b',', [b' ']]], [], [[b'"', [b'2'], b'"'], [], b':', [b' '], [b't', b'r', b'u', b'e'], []], [], b'}'])
+            (22, [[b'{'], [], [[[[b'"', [b'1'], b'"'], [], b':', [b' '], [b'n', b'u', b'l', b'l'], []], b',', [b' ']]], [], [[b'"', [b'2'], b'"'], [], b':', [b' '], [b't', b'r', b'u', b'e'], []], [], [b'}']])
             >>> StandardRules.Json.dict(b'{"1": null, "2" : 1.5 , "3": {"test": true, "1": 2}, "4": [1, 2, false]}')
-            (72, [b'{', [], [[[[b'"', [b'1'], b'"'], [], b':', [b' '], [b'n', b'u', b'l', b'l'], []], b',', [b' ']], [[[b'"', [b'2'], b'"'], [b' '], b':', [b' '], [[b'1'], b'.', [b'5']], [b' ']], b',', [b' ']], [[[b'"', [b'3'], b'"'], [], b':', [b' '], [b'{', [], [[[[b'"', [b't', b'e', b's', b't'], b'"'], [], b':', [b' '], [b't', b'r', b'u', b'e'], []], b',', [b' ']]], [], [[b'"', [b'1'], b'"'], [], b':', [b' '], [b'2'], []], [], b'}'], []], b',', [b' ']]], [], [[b'"', [b'4'], b'"'], [], b':', [b' '], [b'[', [], [[[b'1'], [], b',', [b' ']], [[b'2'], [], b',', [b' ']]], [], [b'f', b'a', b'l', b's', b'e'], [], b']'], []], [], b'}'])
+            (72, [[b'{'], [], [[[[b'"', [b'1'], b'"'], [], b':', [b' '], [b'n', b'u', b'l', b'l'], []], b',', [b' ']], [[[b'"', [b'2'], b'"'], [b' '], b':', [b' '], [[b'1'], b'.', [b'5']], [b' ']], b',', [b' ']], [[[b'"', [b'3'], b'"'], [], b':', [b' '], [[b'{'], [], [[[[b'"', [b't', b'e', b's', b't'], b'"'], [], b':', [b' '], [b't', b'r', b'u', b'e'], []], b',', [b' ']]], [], [[b'"', [b'1'], b'"'], [], b':', [b' '], [b'2'], []], [], [b'}']], []], b',', [b' ']]], [], [[b'"', [b'4'], b'"'], [], b':', [b' '], [[b'['], [], [[[b'1'], [], b',', [b' ']], [[b'2'], [], b',', [b' ']]], [], [b'f', b'a', b'l', b's', b'e'], [], [b']']], []], [], [b'}']])
             >>> StandardRules.Json.dict(b'{"1": null')
             (0, None)
             >>> StandardRules.Json.dict(b'{"1" null}')
@@ -4404,13 +4482,13 @@ class StandardRules:
             def dict_non_empty(data: bytes, position: int):
                 return PegParser.sequence(
                     [
-                        StandardMatch.check_char(123),
+                        StandardRules.Json._start_dict,
                         StandardRules.Format.optional_blanks,
                         dict_keys_values,
                         StandardRules.Format.optional_blanks,
                         dict_key_value,
                         StandardRules.Format.optional_blanks,
-                        StandardMatch.check_char(125),
+                        StandardRules.Json._end_dict,
                     ],
                     data,
                     position,
@@ -4419,9 +4497,9 @@ class StandardRules:
             def dict_empty(data: bytes, position: int):
                 return PegParser.sequence(
                     [
-                        StandardMatch.check_char(123),
+                        StandardRules.Json._start_dict,
                         StandardRules.Format.optional_blanks,
-                        StandardMatch.check_char(125),
+                        StandardRules.Json._end_dict,
                     ],
                     data,
                     position,
@@ -4447,25 +4525,25 @@ class StandardRules:
             (trailing comma, forgot comma, ...).
 
             >>> StandardRules.Json.permissive_dict(b'{}')
-            (2, [b'{', [], [], b'}'])
+            (2, [[b'{'], [], [], [b'}']])
             >>> StandardRules.Json.permissive_dict(b'{"1": nuLl}')
-            (11, [b'{', [], [], [], [[b'"', [b'1'], b'"'], [b':', [b' ']], [b'n', b'u', b'L', b'l']], [], b'}'])
+            (11, [[b'{'], [], [], [], [[b'"', [b'1'], b'"'], [b':', [b' ']], [b'n', b'u', b'L', b'l']], [], [b'}']])
             >>> StandardRules.Json.permissive_dict(b'{1: null "2": true}')
-            (19, [b'{', [], [[[[b'1'], [b':', [b' ']], [b'n', b'u', b'l', b'l']], [[b' ']]]], [], [[b'"', [b'2'], b'"'], [b':', [b' ']], [b't', b'r', b'u', b'e']], [], b'}'])
+            (19, [[b'{'], [], [[[[b'1'], [b':', [b' ']], [b'n', b'u', b'l', b'l']], [[b' ']]]], [], [[b'"', [b'2'], b'"'], [b':', [b' ']], [b't', b'r', b'u', b'e']], [], [b'}']])
             >>> StandardRules.Json.permissive_dict(b'{"1" null, "2" : 1.5 , "3": {"test" true "1" 2},"4" :[1 2, false]}')
-            (66, [b'{', [], [[[[b'"', [b'1'], b'"'], [[b' ']], [b'n', b'u', b'l', b'l']], [b',', [b' ']]], [[[b'"', [b'2'], b'"'], [[b' '], b':', [b' ']], [[b'1'], b'.', [b'5']]], [[b' '], b',', [b' ']]], [[[b'"', [b'3'], b'"'], [b':', [b' ']], [b'{', [], [[[[b'"', [b't', b'e', b's', b't'], b'"'], [[b' ']], [b't', b'r', b'u', b'e']], [[b' ']]]], [], [[b'"', [b'1'], b'"'], [[b' ']], [b'2']], [], b'}']], [b',']]], [], [[b'"', [b'4'], b'"'], [[b' '], b':'], [b'[', [], [[[b'1'], [[b' ']]], [[b'2'], [b',', [b' ']]]], [], [b'f', b'a', b'l', b's', b'e'], [], b']']], [], b'}'])
+            (66, [[b'{'], [], [[[[b'"', [b'1'], b'"'], [[b' ']], [b'n', b'u', b'l', b'l']], [b',', [b' ']]], [[[b'"', [b'2'], b'"'], [[b' '], b':', [b' ']], [[b'1'], b'.', [b'5']]], [[b' '], b',', [b' ']]], [[[b'"', [b'3'], b'"'], [b':', [b' ']], [[b'{'], [], [[[[b'"', [b't', b'e', b's', b't'], b'"'], [[b' ']], [b't', b'r', b'u', b'e']], [[b' ']]]], [], [[b'"', [b'1'], b'"'], [[b' ']], [b'2']], [], [b'}']]], [b',']]], [], [[b'"', [b'4'], b'"'], [[b' '], b':'], [[b'['], [], [[[b'1'], [[b' ']]], [[b'2'], [b',', [b' ']]]], [], [b'f', b'a', b'l', b's', b'e'], [], [b']']]], [], [b'}']])
             >>> StandardRules.Json.permissive_dict(b'{"1": null')
             (0, None)
             >>> StandardRules.Json.permissive_dict(b'{true null}')
-            (11, [b'{', [], [], [], [[b't', b'r', b'u', b'e'], [[b' ']], [b'n', b'u', b'l', b'l']], [], b'}'])
+            (11, [[b'{'], [], [], [], [[b't', b'r', b'u', b'e'], [[b' ']], [b'n', b'u', b'l', b'l']], [], [b'}']])
             >>> StandardRules.Json.permissive_dict(b'{"1" null,unDefinEd "2"}')
-            (24, [b'{', [], [[[[b'"', [b'1'], b'"'], [[b' ']], [b'n', b'u', b'l', b'l']], [b',']]], [], [[b'u', b'n', b'D', b'e', b'f', b'i', b'n', b'E', b'd'], [[b' ']], [b'"', [b'2'], b'"']], [], b'}'])
+            (24, [[b'{'], [], [[[[b'"', [b'1'], b'"'], [[b' ']], [b'n', b'u', b'l', b'l']], [b',']]], [], [[b'u', b'n', b'D', b'e', b'f', b'i', b'n', b'E', b'd'], [[b' ']], [b'"', [b'2'], b'"']], [], [b'}']])
             >>> StandardRules.Json.permissive_dict(b'{"1" niL unDefinEd "2"}')
-            (23, [b'{', [], [[[[b'"', [b'1'], b'"'], [[b' ']], [b'n', b'i', b'L']], [[b' ']]]], [], [[b'u', b'n', b'D', b'e', b'f', b'i', b'n', b'E', b'd'], [[b' ']], [b'"', [b'2'], b'"']], [], b'}'])
+            (23, [[b'{'], [], [[[[b'"', [b'1'], b'"'], [[b' ']], [b'n', b'i', b'L']], [[b' ']]]], [], [[b'u', b'n', b'D', b'e', b'f', b'i', b'n', b'E', b'd'], [[b' ']], [b'"', [b'2'], b'"']], [], [b'}']])
             >>> StandardRules.Json.permissive_dict(b'{"1", null}')
             (0, None)
             >>> StandardRules.Json.permissive_dict(b'{1.5:null,}')
-            (11, [b'{', [], [[[[[b'1'], b'.', [b'5']], [b':'], [b'n', b'u', b'l', b'l']], [b',']]], b'}'])
+            (11, [[b'{'], [], [[[[[b'1'], b'.', [b'5']], [b':'], [b'n', b'u', b'l', b'l']], [b',']]], [b'}']])
             >>> 
             """
 
@@ -4534,13 +4612,13 @@ class StandardRules:
             def strict_dict(data: bytes, position: int):
                 return PegParser.sequence(
                     [
-                        StandardMatch.check_char(123),
+                        StandardRules.Json._start_dict,
                         StandardRules.Format.optional_blanks,
                         dict_keys_values,
                         StandardRules.Format.optional_blanks,
                         dict_key_value,
                         StandardRules.Format.optional_blanks,
-                        StandardMatch.check_char(125),
+                        StandardRules.Json._end_dict,
                     ],
                     data,
                     position,
@@ -4549,10 +4627,10 @@ class StandardRules:
             def flex_dict(data: bytes, position: int):
                 return PegParser.sequence(
                     [
-                        StandardMatch.check_char(123),
+                        StandardRules.Json._start_dict,
                         StandardRules.Format.optional_blanks,
                         dict_keys_values,
-                        StandardMatch.check_char(125),
+                        StandardRules.Json._end_dict,
                     ],
                     data,
                     position,
@@ -4578,11 +4656,11 @@ class StandardRules:
             integer, boolean, null).
 
             >>> StandardRules.Json.full(b'{}')
-            (2, [b'{', [], b'}'])
+            (2, [[b'{'], [], [b'}']])
             >>> StandardRules.Json.full(b'{"key": "value", "test": "test"}')
-            (32, [b'{', [], [[[[b'"', [b'k', b'e', b'y'], b'"'], [], b':', [b' '], [b'"', [b'v', b'a', b'l', b'u', b'e'], b'"'], []], b',', [b' ']]], [], [[b'"', [b't', b'e', b's', b't'], b'"'], [], b':', [b' '], [b'"', [b't', b'e', b's', b't'], b'"'], []], [], b'}'])
+            (32, [[b'{'], [], [[[[b'"', [b'k', b'e', b'y'], b'"'], [], b':', [b' '], [b'"', [b'v', b'a', b'l', b'u', b'e'], b'"'], []], b',', [b' ']]], [], [[b'"', [b't', b'e', b's', b't'], b'"'], [], b':', [b' '], [b'"', [b't', b'e', b's', b't'], b'"'], []], [], [b'}']])
             >>> StandardRules.Json.full(b'[]')
-            (2, [b'[', [], b']'])
+            (2, [[b'['], [], [b']']])
             >>> StandardRules.Json.full(b'[1, 2.5, nul]')
             (0, None)
             >>> StandardRules.Json.full(b'"string"')
@@ -4614,13 +4692,13 @@ class StandardRules:
             integer, boolean, null).
 
             >>> StandardRules.Json.permissive_full(b'{}')
-            (2, [b'{', [], [], b'}'])
+            (2, [[b'{'], [], [], [b'}']])
             >>> StandardRules.Json.permissive_full(b'{NONE: FAlse 1.5 "test", ,}')
-            (27, [b'{', [], [[[[b'N', b'O', b'N', b'E'], [b':', [b' ']], [b'F', b'A', b'l', b's', b'e']], [[b' ']]], [[[[b'1'], b'.', [b'5']], [[b' ']], [b'"', [b't', b'e', b's', b't'], b'"']], [b',', [b' '], b',']]], b'}'])
+            (27, [[b'{'], [], [[[[b'N', b'O', b'N', b'E'], [b':', [b' ']], [b'F', b'A', b'l', b's', b'e']], [[b' ']]], [[[[b'1'], b'.', [b'5']], [[b' ']], [b'"', [b't', b'e', b's', b't'], b'"']], [b',', [b' '], b',']]], [b'}']])
             >>> StandardRules.Json.permissive_full(b'[]')
-            (2, [b'[', [], [], b']'])
+            (2, [[b'['], [], [], [b']']])
             >>> StandardRules.Json.permissive_full(b'[1, 2.5, unDefiNed nIl ,,,, ]')
-            (29, [b'[', [], [[[b'1'], [b',', [b' ']]], [[[b'2'], b'.', [b'5']], [b',', [b' ']]], [[b'u', b'n', b'D', b'e', b'f', b'i', b'N', b'e', b'd'], [[b' ']]], [[b'n', b'I', b'l'], [[b' '], b',', b',', b',', b',', [b' ']]]], b']'])
+            (29, [[b'['], [], [[[b'1'], [b',', [b' ']]], [[[b'2'], b'.', [b'5']], [b',', [b' ']]], [[b'u', b'n', b'D', b'e', b'f', b'i', b'N', b'e', b'd'], [[b' ']]], [[b'n', b'I', b'l'], [[b' '], b',', b',', b',', b',', [b' ']]]], [b']']])
             >>> StandardRules.Json.permissive_full(b'"string"')
             (8, [b'"', [b's', b't', b'r', b'i', b'n', b'g'], b'"'])
             >>> StandardRules.Json.permissive_full(b'1.5')
@@ -4672,7 +4750,7 @@ def match_getter(data: Iterable[Union[bytes, bool, Iterable]], process: Callable
 
     process_element(data)
 
-def get_ordered_matchs(data: Iterable[Union[bytes, bool, Iterable]]) -> Dict[str, List[bytearray]]:
+def get_ordered_matchs(data: Iterable[Union[bytes, bool, Iterable]]) -> List[Tuple[str, bytearray]]:
     r"""
     This function returns the ordered match into a list of tuple.
 
@@ -4733,15 +4811,114 @@ def csv_parse(data: bytes) -> Iterable[Tuple[str]]:
             raise error
         yield tuple(x.decode() for x in get_matchs(result)["csv_value"])
 
+def get_json(data: bytes, permissive: bool = False) -> Union[Union[List, Dict, bool, int, float, None]]:
+    r"""
+    This function returns the JSON content as python object.
+
+    >>> get_json(b'{"1": null, "2" : 1.5 , "3": {"test": true, "1": 2}, "4": [1, 2, false]}')
+    {'1': None, '2': 1.5, '3': {'test': True, '1': 2}, '4': [1, 2, False]}
+    >>> get_json(b"[1, 2.5, unDefiNed nIl ,,{'test\\n' trUE fALSe nUll},, ]", True)
+    [1, 2.5, None, None, {'test\n': True, False: None}]
+    >>> 
+    """
+
+    position, matchs = (StandardRules.Json.permissive_full if permissive else StandardRules.Json.full)(data)
+
+    if matchs is not None and len(data) == position:
+        return get_json_from_ordered_matchs(get_ordered_matchs(matchs))
+
+    raise ValueError('Invalid JSON at:' + str(position))
+
+def get_json_from_ordered_matchs(data: List[Tuple[str, bytearray]]) -> Union[Union[List, Dict, bool, int, float, None]]:
+    """
+    This function returns a python object from the ordered matchs.
+
+    >>> get_json_from_ordered_matchs(get_ordered_matchs(StandardRules.Json.full(b'{"1": null, "2" : 1.5 , "3": {"test": true, "1": 2}, "4": [1, 2, false]}')[1]))
+    {'1': None, '2': 1.5, '3': {'test': True, '1': 2}, '4': [1, 2, False]}
+    >>>
+    """
+
+    def call(data):
+        if function := functions.get(data[0][0][11:] if data[0][0].startswith('permissive_') else data[0][0]):
+            return function(data[0][1], data[1:])
+        return call(data[1:])
+
+    def start_dict(data, matchs):
+        data = {}
+        while matchs[0][0] != 'end_dict':
+            key = call(matchs)[0]
+            matchs = matchs[1:]
+            value, matchs = call(matchs)
+            data[key] = value
+        return data, matchs[1:]
+
+    def start_list(data, matchs):
+        data = []
+        while matchs[0][0] != 'end_list':
+            value, matchs = call(matchs)
+            data.append(value)
+        return data, matchs[1:]
+
+    def digits(data, matchs):
+        return int(data.decode()), matchs
+
+    def hex_integer(data, matchs):
+        return int(data.decode(), 16), matchs
+
+    def octal_integer(data, matchs):
+        return int(data.decode(), 8), matchs
+
+    def strings(data, matchs):
+        return decode(data[1:-1].decode(), 'unicode_escape'), matchs
+
+    def float2(data, matchs):
+        return float(data.decode()), matchs[2:]
+
+    def null(data, matchs):
+        return None, matchs
+
+    def true(data, matchs):
+        return True, matchs
+
+    def false(data, matchs):
+        return False, matchs
+
+    functions = locals()
+    functions['float'] = functions['float2']
+    return call(data)[0]
+
+def mjson_file_parse(file: _BufferedIOBase, permissive: bool = False) -> Iterable[Union[List, Dict, bool, int, float, None]]:
+    r"""
+    This generator parses mJSON file and yield JSON for each line.
+
+    >>> from io import BytesIO
+    >>> list(mjson_file_parse(BytesIO(b'{}\n{"1": 1, "2": [true, false, null, 1.5, {"test": []}]}')))
+    [{}, {'1': 1, '2': [True, False, None, 1.5, {'test': []}]}]
+    >>> list(mjson_file_parse(BytesIO(b"{}\n{'1' 1,'2' [true false,null 1.5 {'test' []},,,],, }"), True))
+    [{}, {'1': 1, '2': [True, False, None, 1.5, {'test': []}]}]
+    >>> 
+    """
+
+    file_position = file.tell()
+    parser = StandardRules.Json.permissive_full if permissive else StandardRules.Json.full
+    for line in file:
+        if line[-1] == 10:
+            line = line[:-1]
+        position, data = parser(line)
+        if data is None or len(line) != position:
+            raise ValueError('Invalid JSON at:', position + file_position)
+        yield get_json_from_ordered_matchs(get_ordered_matchs(data))
 
 def csv_file_parse(file: _BufferedIOBase) -> Iterable[List[str]]:
     r"""
-    This function parses CSV file and yield values for each lines.
+    This generator parses CSV file and yield values for each line.
 
     >>> from io import BytesIO
     >>> list(csv_file_parse(BytesIO(b'"1","","other"\n"2"\n"3","test"')))
     [('1', '', 'other'), ('2',), ('3', 'test')]
-    >>>
+    >>> list(csv_file_parse(BytesIO(b'"1","","other"\n"2"\n"3","test"\n')))
+    [('1', '', 'other'), ('2',), ('3', 'test')]
+    >>> 
     """
 
     data = True

@@ -1,6 +1,6 @@
 Metadata-Version: 2.2
 Name: PegParser
-Version: 1.0.0
+Version: 1.0.1
 Summary: This package implements a PEG (Parsing Expression Grammar) to parse syntax, i add rules to parse URL, HTTP request and response easily with security and some format like hexadecimal, base32, base64, base85, CSV, JSON (strict and permissive)...
 Home-page: https://github.com/mauricelambert/PegParser
 Author: Maurice Lambert
@@ -43,7 +43,7 @@ syntax, i add rules to parse URL, HTTP request and response easily
 with security and some format like hexadecimal, base32, base64,
 base85, CSV, JSON (strict and permissive)...
 
-> This module implements standard functions for a PEG Parser, *standard match* (like digit, hexadecimal, letter, upper case letter, lower case letter, ...), *standard rules* (like integer, float, string, ...), *standard formats* (like hexadecimal data, base64 data, ...), *network* formats (like IPv4, IPv6, hostname, ...), a full URL parser, a full HTTP parser (request and response), a full CSV parser and PEG rules to parse JSON (strict and permissive).
+> This module implements standard functions for a PEG Parser, *standard match* (like digit, hexadecimal, letter, upper case letter, lower case letter, ...), *standard rules* (like integer, float, string, ...), *standard formats* (like hexadecimal data, base64 data, ...), *network* formats (like IPv4, IPv6, hostname, ...), a full URL parser, a full HTTP parser (request and response), a full CSV parser and a full JSON parser (strict and permissive).
 
 ## Requirements
 
@@ -87,17 +87,6 @@ python3 -m pip install .
 ```
 
 ## Usages
-
-### Command line
-
-```bash
-PegParser              # Using CLI package executable
-python3 -m PegParser   # Using python module
-python3 PegParser.pyz  # Using python executable
-PegParser.exe          # Using python Windows executable
-```
-
-### Python script
 
 ```python
 from PegParser import *
@@ -147,15 +136,12 @@ with open('data.csv', 'rb') as file:
         field2 = line[1]
         ...
 
-data = b'{"1": null, "2" : 1.5 , "3": {"test": true, "1": 2}, "4": [1, 2, false]}'
-position, matchs = StandardRules.Json.full(data)
-if matchs is not None and position == len(data):
-    get_ordered_matchs(matchs)
+data = get_json(b'{"1": null, "2" : 1.5 , "3": {"test": true, "1": 2}, "4": [1, 2, false]}')
+data = get_json(b'{"1" null, "2" : 1.5 , "3": {"test" true "1" 2},"4" :[1 2, false],}', permissive=True)
 
-data = b'{"1" null, "2" : 1.5 , "3": {"test" true "1" 2},"4" :[1 2, false],}'
-position, matchs = StandardRules.Json.permissive_full(data)
-if matchs is not None and position == len(data):
-    get_ordered_matchs(matchs)
+with open('data.mjson', 'rb') as file:
+    for data in mjson_file_parse(file):
+        print(data)
 ```
 
 ## Links
