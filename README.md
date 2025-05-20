@@ -7,9 +7,9 @@
 This package implements a PEG (Parsing Expression Grammar) to parse
 syntax, i add rules to parse URL, HTTP request and response easily
 with security and some format like hexadecimal, base32, base64,
-base85, CSV, JSON (strict and permissive)...
+base85, CSV, JSON (strict and permissive), system file path...
 
-> This module implements standard functions for a PEG Parser, *standard match* (like digit, hexadecimal, letter, upper case letter, lower case letter, ...), *standard rules* (like integer, float, string, ...), *standard formats* (like hexadecimal data, base64 data, ...), *network* formats (like IPv4, IPv6, hostname, ...), a full URL parser, a full HTTP parser (request and response), a full CSV parser and a full JSON parser (strict and permissive).
+> This module implements standard functions for a PEG Parser, *standard match* (like digit, hexadecimal, letter, upper case letter, lower case letter, ...), *standard rules* (like integer, float, string, ...), *standard formats* (like hexadecimal data, base64 data, ...), *network* formats (like IPv4, IPv6, hostname, ...), a full URL parser, a full HTTP parser (request and response), a full CSV parser, a full JSON parser (strict and permissive) and system file path (Windows (DOS and NT path) and Linux path).
 
 ## Requirements
 
@@ -108,6 +108,8 @@ data = get_json(b'{"1" null, "2" : 1.5 , "3": {"test" true "1" 2},"4" :[1 2, fal
 with open('data.mjson', 'rb') as file:
     for data in mjson_file_parse(file):
         print(data)
+
+match(StandardRules.Path.path, b'\\\\?\\test\\1\\2\\test.txt**', 7) # b'\\\\?\\test\\1\\2\\test.txt'
 ```
 
 ## Links

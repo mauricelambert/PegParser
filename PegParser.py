@@ -5,7 +5,7 @@
 #    This package implements a PEG (Parsing Expression Grammar) to parse
 #    syntax, i add rules to parse URL, HTTP request and response easily
 #    with security and some format like hexadecimal, base32, base64,
-#    base85, CSV, JSON (strict and permissive)...
+#    base85, CSV, JSON (strict and permissive), system file path...
 #    Copyright (C) 2025  PegParser
 
 #    This program is free software: you can redistribute it and/or modify
@@ -26,14 +26,18 @@
 This package implements a PEG (Parsing Expression Grammar) to parse
 syntax, i add rules to parse URL, HTTP request and response easily
 with security and some format like hexadecimal, base32, base64,
-base85, CSV, JSON (strict and permissive)...
+base85, CSV, JSON (strict and permissive), system file path...
 
 Tests:
 ~# python3 -m doctest PegParser.py
 ~# python3 -m doctest -v PegParser.py
 
-43 items had no tests:
+51 items had no tests:
     PegParser
+    PegParser.Format
+    PegParser.Format.__eq__
+    PegParser.Format.__init__
+    PegParser.Format.__repr__
     PegParser.HttpRequest
     PegParser.HttpRequest.__eq__
     PegParser.HttpRequest.__init__
@@ -64,6 +68,10 @@ Tests:
     PegParser.StandardRules.Json._start_dict
     PegParser.StandardRules.Json._start_list
     PegParser.StandardRules.Network
+    PegParser.StandardRules.Path
+    PegParser.StandardRules.Path._directories_file
+    PegParser.StandardRules.Path._directories_or_file
+    PegParser.StandardRules.Path._directory_file
     PegParser.StandardRules.Types
     PegParser.StandardRules.Url
     PegParser.StandardRules.Url._base_path
@@ -76,7 +84,7 @@ Tests:
     PegParser.StandardRules.Url._optional_characters_subdelims_colon_commat_slot_quest
     PegParser.get_http_content
     PegParser.match_getter
-90 items passed all tests:
+104 items passed all tests:
    3 tests in PegParser.HttpRequest.__bytes__
    3 tests in PegParser.HttpResponse.__bytes__
    3 tests in PegParser.StandardMatch.is_blank
@@ -96,7 +104,10 @@ Tests:
    2 tests in PegParser.StandardRules.Csv.value
    6 tests in PegParser.StandardRules.Csv.values
    9 tests in PegParser.StandardRules.Format.base32
+   9 tests in PegParser.StandardRules.Format.base32_insensitive
+   9 tests in PegParser.StandardRules.Format.base32_lower
    8 tests in PegParser.StandardRules.Format.base64
+   9 tests in PegParser.StandardRules.Format.base64_urlsafe
    6 tests in PegParser.StandardRules.Format.base85
    4 tests in PegParser.StandardRules.Format.blanks
    6 tests in PegParser.StandardRules.Format.hex
@@ -143,6 +154,16 @@ Tests:
    8 tests in PegParser.StandardRules.Network.ipv6_zoneid
    7 tests in PegParser.StandardRules.Network.ipvfuture
    3 tests in PegParser.StandardRules.Network.user_info
+   4 tests in PegParser.StandardRules.Path.base_filename
+   3 tests in PegParser.StandardRules.Path.drive_path
+   4 tests in PegParser.StandardRules.Path.extensions
+   4 tests in PegParser.StandardRules.Path.filename
+   4 tests in PegParser.StandardRules.Path.filename_extension
+   4 tests in PegParser.StandardRules.Path.linux_path
+   3 tests in PegParser.StandardRules.Path.nt_path
+  13 tests in PegParser.StandardRules.Path.path
+   3 tests in PegParser.StandardRules.Path.relative_path
+   9 tests in PegParser.StandardRules.Path.windows_path
    6 tests in PegParser.StandardRules.Types.bool
    6 tests in PegParser.StandardRules.Types.digits
    6 tests in PegParser.StandardRules.Types.float
@@ -164,15 +185,16 @@ Tests:
    1 tests in PegParser.get_json_from_ordered_matchs
    2 tests in PegParser.get_matchs
    2 tests in PegParser.get_ordered_matchs
+   4 tests in PegParser.match
    3 tests in PegParser.mjson_file_parse
    1 tests in PegParser.parse_http_request
    1 tests in PegParser.parse_http_response
-460 tests in 133 items.
-460 passed and 0 failed.
+542 tests in 155 items.
+542 passed and 0 failed.
 Test passed.
 """
 
-__version__ = "1.0.1"
+__version__ = "1.1.0"
 __author__ = "Maurice Lambert"
 __author_email__ = "mauricelambert434@gmail.com"
 __maintainer__ = "Maurice Lambert"
@@ -181,7 +203,7 @@ __description__ = """
 This package implements a PEG (Parsing Expression Grammar) to parse
 syntax, i add rules to parse URL, HTTP request and response easily
 with security and some format like hexadecimal, base32, base64,
-base85, CSV, JSON (strict and permissive)...
+base85, CSV, JSON (strict and permissive), system file path...
 """
 __url__ = "https://github.com/mauricelambert/PegParser"
 
@@ -200,10 +222,20 @@ license = __license__
 print(copyright)
 
 from typing import Callable, List, Iterable, Union, Tuple, Dict
+from base64 import b32decode, b64decode, b85decode
 from collections import defaultdict
 from dataclasses import dataclass
 from _io import _BufferedIOBase
+from binascii import unhexlify
+from functools import partial
 from codecs import decode
+
+
+@dataclass
+class Format:
+    name: str
+    match: Callable
+    decode: Callable
 
 
 @dataclass
@@ -1374,8 +1406,73 @@ class StandardRules:
 
             return result
 
-        def base32(
+        def base32_insensitive(
             data: bytes, position: int = 0
+        ) -> Tuple[
+            int, Iterable[Union[bool, Iterable[Union[bytes, Iterable[bytes]]]]]
+        ]:
+            """
+            This method checks for insensitive base32 format.
+
+            >>> StandardRules.Format.base32_insensitive(b"aB======")
+            (8, [[], [b'a', b'B', b'=', b'=', b'=', b'=', b'=', b'=']])
+            >>> StandardRules.Format.base32_insensitive(b"aBc2====")
+            (8, [[], [b'a', b'B', b'c', b'2', b'=', b'=', b'=', b'=']])
+            >>> StandardRules.Format.base32_insensitive(b"aBc23===")
+            (8, [[], [b'a', b'B', b'c', b'2', b'3', b'=', b'=', b'=']])
+            >>> StandardRules.Format.base32_insensitive(b"aBc23zt=")
+            (8, [[], [b'a', b'B', b'c', b'2', b'3', b'z', b't', b'=']])
+            >>> StandardRules.Format.base32_insensitive(b"aBc23zt7")
+            (8, [[[b'a', b'B', b'c', b'2', b'3', b'z', b't', b'7']], True])
+            >>> StandardRules.Format.base32_insensitive(b"ab")
+            (0, [[], True])
+            >>> StandardRules.Format.base32_insensitive(b"a1======")
+            (0, [[], True])
+            >>> StandardRules.Format.base32_insensitive(b"a ======")
+            (0, [[], True])
+            >>> StandardRules.Format.base32_insensitive(b"aBc23zt7kf======")
+            (16, [[[b'a', b'B', b'c', b'2', b'3', b'z', b't', b'7']], [b'k', b'f', b'=', b'=', b'=', b'=', b'=', b'=']])
+            >>>
+            """
+
+            return StandardRules.Format.base32(data, position, False, True)
+
+        def base32_lower(
+            data: bytes, position: int = 0
+        ) -> Tuple[
+            int, Iterable[Union[bool, Iterable[Union[bytes, Iterable[bytes]]]]]
+        ]:
+            """
+            This method checks for lower base32 format.
+
+            >>> StandardRules.Format.base32_lower(b"ab======")
+            (8, [[], [b'a', b'b', b'=', b'=', b'=', b'=', b'=', b'=']])
+            >>> StandardRules.Format.base32_lower(b"abc2====")
+            (8, [[], [b'a', b'b', b'c', b'2', b'=', b'=', b'=', b'=']])
+            >>> StandardRules.Format.base32_lower(b"abc23===")
+            (8, [[], [b'a', b'b', b'c', b'2', b'3', b'=', b'=', b'=']])
+            >>> StandardRules.Format.base32_lower(b"abc23zt=")
+            (8, [[], [b'a', b'b', b'c', b'2', b'3', b'z', b't', b'=']])
+            >>> StandardRules.Format.base32_lower(b"abc23zt7")
+            (8, [[[b'a', b'b', b'c', b'2', b'3', b'z', b't', b'7']], True])
+            >>> StandardRules.Format.base32_lower(b"ab")
+            (0, [[], True])
+            >>> StandardRules.Format.base32_lower(b"a1======")
+            (0, [[], True])
+            >>> StandardRules.Format.base32_lower(b"a ======")
+            (0, [[], True])
+            >>> StandardRules.Format.base32_lower(b"abc23zt7kf======")
+            (16, [[[b'a', b'b', b'c', b'2', b'3', b'z', b't', b'7']], [b'k', b'f', b'=', b'=', b'=', b'=', b'=', b'=']])
+            >>>
+            """
+
+            return StandardRules.Format.base32(data, position, True)
+
+        def base32(
+            data: bytes,
+            position: int = 0,
+            lower: bool = False,
+            insensitive: bool = False,
         ) -> Tuple[
             int, Iterable[Union[bool, Iterable[Union[bytes, Iterable[bytes]]]]]
         ]:
@@ -1406,7 +1503,15 @@ class StandardRules:
             def base32_char(data: bytes, position: int):
                 return PegParser.ordered_choice(
                     [
-                        StandardMatch.is_upper,
+                        (
+                            StandardMatch.is_letter
+                            if insensitive
+                            else (
+                                StandardMatch.is_lower
+                                if lower
+                                else StandardMatch.is_upper
+                            )
+                        ),
                         StandardMatch.or_check_chars(50, 51, 52, 53, 54, 55),
                     ],
                     data,
@@ -1467,8 +1572,39 @@ class StandardRules:
 
             return result
 
-        def base64(
+        def base64_urlsafe(
             data: bytes, position: int = 0
+        ) -> Tuple[
+            int, Iterable[Union[bool, Iterable[Union[bytes, Iterable[bytes]]]]]
+        ]:
+            """
+            This method checks for base64 urlsafe format.
+
+            >>> StandardRules.Format.base64_urlsafe(b'Y5==')
+            (4, [[], [b'Y', b'5', b'=', b'=']])
+            >>> StandardRules.Format.base64_urlsafe(b'Y5-=')
+            (4, [[], [b'Y', b'5', b'-', b'=']])
+            >>> StandardRules.Format.base64_urlsafe(b"Y5-_")
+            (4, [[[b'Y', b'5', b'-', b'_']], True])
+            >>> StandardRules.Format.base64_urlsafe(b"09AZaz-_")
+            (8, [[[b'0', b'9', b'A', b'Z'], [b'a', b'z', b'-', b'_']], True])
+            >>> StandardRules.Format.base64_urlsafe(b"--==")
+            (4, [[], [b'-', b'-', b'=', b'=']])
+            >>> StandardRules.Format.base64_urlsafe(b"___=")
+            (4, [[], [b'_', b'_', b'_', b'=']])
+            >>> StandardRules.Format.base64_urlsafe(b"a=")
+            (0, [[], True])
+            >>> StandardRules.Format.base64_urlsafe(b"a+==")
+            (0, [[], True])
+            >>> StandardRules.Format.base64_urlsafe(b"a/==")
+            (0, [[], True])
+            >>>
+            """
+
+            return StandardRules.Format.base64(data, position, True)
+
+        def base64(
+            data: bytes, position: int = 0, urlsafe: bool = False
         ) -> Tuple[
             int, Iterable[Union[bool, Iterable[Union[bytes, Iterable[bytes]]]]]
         ]:
@@ -1499,7 +1635,11 @@ class StandardRules:
                     [
                         StandardMatch.is_letter,
                         StandardMatch.is_digit,
-                        StandardMatch.or_check_chars(43, 47),
+                        (
+                            StandardMatch.or_check_chars(45, 95)
+                            if urlsafe
+                            else StandardMatch.or_check_chars(43, 47)
+                        ),
                     ],
                     data,
                     position,
@@ -3873,7 +4013,7 @@ class StandardRules:
 
             >>> StandardRules.Csv.multi(b'"1","","other"\n"2"\n"3","test"\n\r\n"1","","other"\r\n"2"\r\n"3","test"')
             (63, [[[[b'"', [b'1'], b'"'], [[b',', [b'"', [], b'"']], [b',', [b'"', [b'o', b't', b'h', b'e', b'r'], b'"']]]], [[b'\n', [[b'"', [b'2'], b'"'], []]], [b'\n', [[b'"', [b'3'], b'"'], [[b',', [b'"', [b't', b'e', b's', b't'], b'"']]]]]]], [[b'\n', [b'\r', b'\n'], [[[b'"', [b'1'], b'"'], [[b',', [b'"', [], b'"']], [b',', [b'"', [b'o', b't', b'h', b'e', b'r'], b'"']]]], [[[b'\r', b'\n'], [[b'"', [b'2'], b'"'], []]], [[b'\r', b'\n'], [[b'"', [b'3'], b'"'], [[b',', [b'"', [b't', b'e', b's', b't'], b'"']]]]]]]]]])
-            >>> 
+            >>>
             """
 
             def delimiter_csv(data: bytes, position: int):
@@ -3908,14 +4048,15 @@ class StandardRules:
 
             return result
 
-
     class Json:
         """
         This class implements strict and permissive JSON parser.
         """
 
-        def null(data: bytes, position: int = 0) -> Tuple[int, Union[None, List[bytes]]]:
-            '''
+        def null(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[None, List[bytes]]]:
+            """
             This function checks for strict null value.
 
             >>> StandardRules.Json.null(b'null')
@@ -3934,8 +4075,8 @@ class StandardRules:
             (0, None)
             >>> StandardRules.Json.null(b'undeFined')
             (0, None)
-            >>> 
-            '''
+            >>>
+            """
 
             result = PegParser.sequence(
                 [
@@ -3944,7 +4085,8 @@ class StandardRules:
                     StandardMatch.check_char(108),
                     StandardMatch.check_char(108),
                 ],
-                data, position
+                data,
+                position,
             )
 
             if isinstance(result[1], MatchList):
@@ -3952,8 +4094,10 @@ class StandardRules:
 
             return result
 
-        def true(data: bytes, position: int = 0) -> Tuple[int, Union[None, List[bytes]]]:
-            '''
+        def true(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[None, List[bytes]]]:
+            """
             This function checks for strict true value.
 
             >>> StandardRules.Json.true(b'true')
@@ -3962,8 +4106,8 @@ class StandardRules:
             (0, None)
             >>> StandardRules.Json.true(b'TRUE')
             (0, None)
-            >>> 
-            '''
+            >>>
+            """
 
             result = PegParser.sequence(
                 [
@@ -3972,7 +4116,8 @@ class StandardRules:
                     StandardMatch.check_char(117),
                     StandardMatch.check_char(101),
                 ],
-                data, position
+                data,
+                position,
             )
 
             if isinstance(result[1], MatchList):
@@ -3980,8 +4125,10 @@ class StandardRules:
 
             return result
 
-        def false(data: bytes, position: int = 0) -> Tuple[int, Union[None, List[bytes]]]:
-            '''
+        def false(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[None, List[bytes]]]:
+            """
             This function checks for strict false value.
 
             >>> StandardRules.Json.false(b'false')
@@ -3990,8 +4137,8 @@ class StandardRules:
             (0, None)
             >>> StandardRules.Json.false(b'FALSE')
             (0, None)
-            >>> 
-            '''
+            >>>
+            """
 
             result = PegParser.sequence(
                 [
@@ -4001,7 +4148,8 @@ class StandardRules:
                     StandardMatch.check_char(115),
                     StandardMatch.check_char(101),
                 ],
-                data, position
+                data,
+                position,
             )
 
             if isinstance(result[1], MatchList):
@@ -4009,8 +4157,10 @@ class StandardRules:
 
             return result
 
-        def permissive_null(data: bytes, position: int = 0) -> Tuple[int, Union[None, List[bytes]]]:
-            '''
+        def permissive_null(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[None, List[bytes]]]:
+            """
             This function checks for permissive null value.
 
             >>> StandardRules.Json.permissive_null(b'null')
@@ -4029,8 +4179,8 @@ class StandardRules:
             (9, [b'u', b'n', b'd', b'e', b'f', b'i', b'n', b'e', b'd'])
             >>> StandardRules.Json.permissive_null(b'undeFined')
             (9, [b'u', b'n', b'd', b'e', b'F', b'i', b'n', b'e', b'd'])
-            >>> 
-            '''
+            >>>
+            """
 
             result = PegParser.ordered_choice(
                 [
@@ -4040,20 +4190,29 @@ class StandardRules:
                             StandardMatch.or_check_chars(117, 85),
                             StandardMatch.or_check_chars(108, 76),
                             StandardMatch.or_check_chars(108, 76),
-                        ], d, p),
+                        ],
+                        d,
+                        p,
+                    ),
                     lambda d, p: PegParser.sequence(
                         [
                             StandardMatch.or_check_chars(110, 78),
                             StandardMatch.or_check_chars(111, 79),
                             StandardMatch.or_check_chars(110, 78),
                             StandardMatch.or_check_chars(101, 69),
-                        ], d, p),
+                        ],
+                        d,
+                        p,
+                    ),
                     lambda d, p: PegParser.sequence(
                         [
                             StandardMatch.or_check_chars(110, 78),
                             StandardMatch.or_check_chars(105, 73),
                             StandardMatch.or_check_chars(108, 76),
-                        ], d, p),
+                        ],
+                        d,
+                        p,
+                    ),
                     lambda d, p: PegParser.sequence(
                         [
                             StandardMatch.or_check_chars(117, 85),
@@ -4065,9 +4224,13 @@ class StandardRules:
                             StandardMatch.or_check_chars(110, 78),
                             StandardMatch.or_check_chars(101, 69),
                             StandardMatch.or_check_chars(100, 68),
-                        ], d, p),
+                        ],
+                        d,
+                        p,
+                    ),
                 ],
-                data, position
+                data,
+                position,
             )
 
             if isinstance(result[1], MatchList):
@@ -4075,8 +4238,10 @@ class StandardRules:
 
             return result
 
-        def permissive_true(data: bytes, position: int = 0) -> Tuple[int, Union[None, List[bytes]]]:
-            '''
+        def permissive_true(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[None, List[bytes]]]:
+            """
             This function checks for permissive true value.
 
             >>> StandardRules.Json.permissive_true(b'true')
@@ -4085,8 +4250,8 @@ class StandardRules:
             (4, [b'T', b'r', b'u', b'e'])
             >>> StandardRules.Json.permissive_true(b'TRUE')
             (4, [b'T', b'R', b'U', b'E'])
-            >>> 
-            '''
+            >>>
+            """
 
             result = PegParser.sequence(
                 [
@@ -4095,7 +4260,8 @@ class StandardRules:
                     StandardMatch.or_check_chars(117, 85),
                     StandardMatch.or_check_chars(101, 69),
                 ],
-                data, position
+                data,
+                position,
             )
 
             if isinstance(result[1], MatchList):
@@ -4103,8 +4269,10 @@ class StandardRules:
 
             return result
 
-        def permissive_false(data: bytes, position: int = 0) -> Tuple[int, Union[None, List[bytes]]]:
-            '''
+        def permissive_false(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[None, List[bytes]]]:
+            """
             This function checks for permissive false value.
 
             >>> StandardRules.Json.permissive_false(b'false')
@@ -4113,8 +4281,8 @@ class StandardRules:
             (5, [b'F', b'a', b'l', b's', b'e'])
             >>> StandardRules.Json.permissive_false(b'FALSE')
             (5, [b'F', b'A', b'L', b'S', b'E'])
-            >>> 
-            '''
+            >>>
+            """
 
             result = PegParser.sequence(
                 [
@@ -4124,7 +4292,8 @@ class StandardRules:
                     StandardMatch.or_check_chars(115, 83),
                     StandardMatch.or_check_chars(101, 69),
                 ],
-                data, position
+                data,
+                position,
             )
 
             if isinstance(result[1], MatchList):
@@ -4132,7 +4301,10 @@ class StandardRules:
 
             return result
 
-        def simple_value(data: bytes, position: int = 0) -> Tuple[int, Union[None, List[Union[bytes, List[Union[bytes, List[bytes]]]]]]]:
+        def simple_value(data: bytes, position: int = 0) -> Tuple[
+            int,
+            Union[None, List[Union[bytes, List[Union[bytes, List[bytes]]]]]],
+        ]:
             r"""
             This function checks for strict `simple` value (null,
             boolean, integer, float, string).
@@ -4153,7 +4325,7 @@ class StandardRules:
             (4, [[b'1'], b'.', [b'2', b'3']])
             >>> StandardRules.Json.simple_value(b'"test\\"abc"')
             (11, [b'"', [b't', b'e', b's', b't', [b'\\', b'"'], b'a', b'b', b'c'], b'"'])
-            >>> 
+            >>>
             """
 
             return PegParser.ordered_choice(
@@ -4171,7 +4343,10 @@ class StandardRules:
                 position,
             )
 
-        def permissive_simple_value(data: bytes, position: int = 0) -> Tuple[int, Union[None, List[Union[bytes, List[Union[bytes, List[bytes]]]]]]]:
+        def permissive_simple_value(data: bytes, position: int = 0) -> Tuple[
+            int,
+            Union[None, List[Union[bytes, List[Union[bytes, List[bytes]]]]]],
+        ]:
             r"""
             This function checks for permissive `simple` value (null, boolean, integer, float, string).
 
@@ -4191,7 +4366,7 @@ class StandardRules:
             (4, [[b'1'], b'.', [b'2', b'3']])
             >>> StandardRules.Json.permissive_simple_value(b'"test\\"abc"')
             (11, [b'"', [b't', b'e', b's', b't', [b'\\', b'"'], b'a', b'b', b'c'], b'"'])
-            >>> 
+            >>>
             """
 
             return PegParser.ordered_choice(
@@ -4229,8 +4404,10 @@ class StandardRules:
 
             return result
 
-        def list(data: bytes, position: int = 0) -> Tuple[int, Union[None, List]]:
-            '''
+        def list(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[None, List]]:
+            """
             This function checks for strict JSON list.
 
             >>> StandardRules.Json.list(b'[]')
@@ -4247,8 +4424,8 @@ class StandardRules:
             (0, None)
             >>> StandardRules.Json.list(b'[1 null]')
             (0, None)
-            >>> 
-            '''
+            >>>
+            """
 
             def list_value(data: bytes, position: int):
                 return PegParser.sequence(
@@ -4309,7 +4486,9 @@ class StandardRules:
 
             return result
 
-        def permissive_list(data: bytes, position: int = 0) -> Tuple[int, Union[None, List]]:
+        def permissive_list(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[None, List]]:
             """
             This function checks for a permissive JSON list
             (trailing comma, forgot comma, ...).
@@ -4328,7 +4507,7 @@ class StandardRules:
             (4, [[b'['], [], [[[b'1'], [b',']]], [b']']])
             >>> StandardRules.Json.permissive_list(b'[1 noNe]')
             (8, [[b'['], [], [[[b'1'], [[b' ']]]], [], [b'n', b'o', b'N', b'e'], [], [b']']])
-            >>> 
+            >>>
             """
 
             def separator(data: bytes, position: int):
@@ -4426,7 +4605,9 @@ class StandardRules:
 
             return result
 
-        def dict(data: bytes, position: int = 0) -> Tuple[int, Union[None, List]]:
+        def dict(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[None, List]]:
             """
             This function checks for strict JSON dict.
 
@@ -4444,7 +4625,7 @@ class StandardRules:
             (0, None)
             >>> StandardRules.Json.dict(b'{"1": null,}')
             (0, None)
-            >>> 
+            >>>
             """
 
             def dict_key_value(data: bytes, position: int):
@@ -4519,7 +4700,9 @@ class StandardRules:
 
             return result
 
-        def permissive_dict(data: bytes, position: int = 0) -> Tuple[int, Union[None, List]]:
+        def permissive_dict(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[None, List]]:
             """
             This function checks for a permissive JSON dict
             (trailing comma, forgot comma, ...).
@@ -4544,7 +4727,7 @@ class StandardRules:
             (0, None)
             >>> StandardRules.Json.permissive_dict(b'{1.5:null,}')
             (11, [[b'{'], [], [[[[[b'1'], b'.', [b'5']], [b':'], [b'n', b'u', b'l', b'l']], [b',']]], [b'}']])
-            >>> 
+            >>>
             """
 
             def separator(data: bytes, position: int):
@@ -4650,7 +4833,9 @@ class StandardRules:
 
             return result
 
-        def full(data: bytes, position: int = 0) -> Tuple[int, Union[None, List]]:
+        def full(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[None, List]]:
             """
             This function matchs all JSON type (dict, list, string, float,
             integer, boolean, null).
@@ -4673,7 +4858,7 @@ class StandardRules:
             (4, [b't', b'r', b'u', b'e'])
             >>> StandardRules.Json.full(b'null')
             (4, [b'n', b'u', b'l', b'l'])
-            >>> 
+            >>>
             """
 
             return PegParser.ordered_choice(
@@ -4686,7 +4871,9 @@ class StandardRules:
                 position,
             )
 
-        def permissive_full(data: bytes, position: int = 0) -> Tuple[int, Union[None, List]]:
+        def permissive_full(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[None, List]]:
             """
             This function matchs all JSON permissive type (dict, list, string, float,
             integer, boolean, null).
@@ -4709,7 +4896,7 @@ class StandardRules:
             (4, [b't', b'r', b'U', b'e'])
             >>> StandardRules.Json.permissive_full(b'nUll')
             (4, [b'n', b'U', b'l', b'l'])
-            >>> 
+            >>>
             """
 
             return PegParser.ordered_choice(
@@ -4722,7 +4909,518 @@ class StandardRules:
                 position,
             )
 
-def match_getter(data: Iterable[Union[bytes, bool, Iterable]], process: Callable[str, bytearray]) -> None:
+    class Path:
+        """
+        This class implements Windows and NT path.
+        """
+
+        def base_filename(
+            data: bytes, position: int = 0, in_extension: bool = False
+        ) -> Tuple[int, Union[None, Iterable[bytes]]]:
+            r"""
+            This function matchs base filename.
+
+            >>> StandardRules.Path.base_filename(b'test')
+            (4, [b't', b'e', b's', b't'])
+            >>> StandardRules.Path.base_filename(b'test*test')
+            (4, [b't', b'e', b's', b't'])
+            >>> StandardRules.Path.base_filename(b'$MFT')
+            (4, [b'$', b'M', b'F', b'T'])
+            >>> StandardRules.Path.base_filename(b'\\test')
+            (0, None)
+            >>>
+            """
+
+            def characters(data: bytes, position: int):
+                return PegParser.ordered_choice(
+                    [
+                        StandardMatch.is_letter,
+                        StandardMatch.is_digit,
+                        StandardMatch.or_check_chars(
+                            33,
+                            36,
+                            37,
+                            38,
+                            39,
+                            40,
+                            41,
+                            43,
+                            44,
+                            45,
+                            58,
+                            61,
+                            64,
+                            91,
+                            93,
+                            94,
+                            95,
+                            96,
+                            123,
+                            125,
+                            126,
+                        ),
+                    ],
+                    data,
+                    position,
+                )
+
+            result = PegParser.one_or_more(
+                characters,
+                data,
+                position,
+            )
+
+            if not in_extension and isinstance(result[1], MatchList):
+                result[1]._match_name = "base_filename"
+
+            return result
+
+        def extensions(
+            data: bytes, position: int = 0
+        ) -> Tuple[
+            int, Union[None, Iterable[Iterable[Union[bytes, Iterable[bytes]]]]]
+        ]:
+            """
+            This function matchs extensions.
+
+            >>> StandardRules.Path.extensions(b'.exe')
+            (4, [[b'.', [b'e', b'x', b'e']]])
+            >>> StandardRules.Path.extensions(b'.dll')
+            (4, [[b'.', [b'd', b'l', b'l']]])
+            >>> StandardRules.Path.extensions(b'.py')
+            (3, [[b'.', [b'p', b'y']]])
+            >>> StandardRules.Path.extensions(b'.c.txt.zip.tar.gz')
+            (17, [[b'.', [b'c']], [b'.', [b't', b'x', b't']], [b'.', [b'z', b'i', b'p']], [b'.', [b't', b'a', b'r']], [b'.', [b'g', b'z']]])
+            >>>
+            """
+
+            def extension(data: bytes, position: int):
+                result = PegParser.sequence(
+                    [
+                        StandardMatch.check_char(46),
+                        StandardRules.Path.base_filename,
+                    ],
+                    data,
+                    position,
+                )
+
+                if isinstance(result[1], MatchList):
+                    result[1]._match_name = "extension"
+
+                return result
+
+            return PegParser.one_or_more(
+                extension,
+                data,
+                position,
+            )
+
+        def filename_extension(data: bytes, position: int = 0) -> Tuple[
+            int,
+            Union[
+                None,
+                Iterable[Iterable[Iterable[Union[bytes, Iterable[bytes]]]]],
+            ],
+        ]:
+            r"""
+            This function matchs filename with extension.
+
+            >>> StandardRules.Path.filename_extension(b'test.exe')
+            (8, [[b't', b'e', b's', b't'], [[b'.', [b'e', b'x', b'e']]]])
+            >>> StandardRules.Path.filename_extension(b'test*test.test')
+            (0, None)
+            >>> StandardRules.Path.filename_extension(b'$MFT.txt.tar.gz')
+            (15, [[b'$', b'M', b'F', b'T'], [[b'.', [b't', b'x', b't']], [b'.', [b't', b'a', b'r']], [b'.', [b'g', b'z']]]])
+            >>> StandardRules.Path.filename_extension(b'\\test.py')
+            (0, None)
+            >>>
+            """
+
+            result = PegParser.sequence(
+                [
+                    StandardRules.Path.base_filename,
+                    StandardRules.Path.extensions,
+                ],
+                data,
+                position,
+            )
+
+            if isinstance(result[1], MatchList):
+                result[1]._match_name = "filename_extension"
+
+            return result
+
+        def filename(data: bytes, position: int = 0) -> Tuple[
+            int,
+            Union[
+                None,
+                Iterable[Iterable[Iterable[Union[bytes, Iterable[bytes]]]]],
+            ],
+        ]:
+            r"""
+            This function matchs filename.
+
+            >>> StandardRules.Path.filename(b'test')
+            (4, [b't', b'e', b's', b't'])
+            >>> StandardRules.Path.filename(b'test*test.test')
+            (4, [b't', b'e', b's', b't'])
+            >>> StandardRules.Path.filename(b'$MFT.txt.tar.gz')
+            (15, [[b'$', b'M', b'F', b'T'], [[b'.', [b't', b'x', b't']], [b'.', [b't', b'a', b'r']], [b'.', [b'g', b'z']]]])
+            >>> StandardRules.Path.filename(b'\\test.py')
+            (0, None)
+            >>>
+            """
+
+            result = PegParser.ordered_choice(
+                [
+                    StandardRules.Path.filename_extension,
+                    StandardRules.Path.base_filename,
+                ],
+                data,
+                position,
+            )
+
+            if isinstance(result[1], MatchList):
+                result[1]._match_name = "filename"
+
+            return result
+
+        def _directory_file(data: bytes, position: int, unix: bool = False):
+            def base(data: bytes, position: int):
+                return PegParser.sequence(
+                    [
+                        lambda d, p: PegParser.one_or_more(
+                            StandardMatch.check_char(47 if unix else 92), d, p
+                        ),
+                        StandardRules.Path.filename,
+                    ],
+                    data,
+                    position,
+                )
+
+            def relative(data: bytes, position: int):
+                return PegParser.sequence(
+                    [
+                        lambda d, p: PegParser.one_or_more(
+                            StandardMatch.check_char(47 if unix else 92), d, p
+                        ),
+                        lambda d, p: PegParser.one_or_more(
+                            StandardMatch.check_char(46), d, p
+                        ),
+                    ],
+                    data,
+                    position,
+                )
+
+            return PegParser.ordered_choice(
+                [
+                    base,
+                    relative,
+                ],
+                data,
+                position,
+            )
+
+        def _directories_file(data: bytes, position: int, unix: bool = False):
+            return PegParser.one_or_more(
+                lambda d, p: StandardRules.Path._directory_file(d, p, unix),
+                data,
+                position,
+            )
+
+        def _directories_or_file(
+            data: bytes, position: int, unix: bool = False
+        ):
+            return PegParser.ordered_choice(
+                [
+                    lambda d, p: PegParser.sequence(
+                        [
+                            lambda x, y: StandardRules.Path._directories_file(
+                                x, y, unix
+                            ),
+                            StandardMatch.check_char(47 if unix else 92),
+                        ],
+                        d,
+                        p,
+                    ),
+                    lambda d, p: StandardRules.Path._directories_file(
+                        d, p, unix
+                    ),
+                ],
+                data,
+                position,
+            )
+
+        def drive_path(data: bytes, position: int = 0) -> Tuple[
+            int,
+            Union[
+                Iterable[
+                    Union[
+                        bytes,
+                        Iterable[
+                            Iterable[
+                                Iterable[
+                                    Union[
+                                        bytes,
+                                        Iterable[
+                                            Union[Iterable[bytes], bytes]
+                                        ],
+                                    ]
+                                ]
+                            ]
+                        ],
+                    ]
+                ],
+                None,
+            ],
+        ]:
+            r"""
+            This function matchs Windows path starting by drive letter.
+
+            >>> StandardRules.Path.drive_path(b'D:\\test')
+            (7, [b'D', b':', [[[b'\\'], [b't', b'e', b's', b't']]]])
+            >>> StandardRules.Path.drive_path(b'D:\\test\\')
+            (8, [b'D', b':', [[[[b'\\'], [b't', b'e', b's', b't']]], b'\\']])
+            >>> StandardRules.Path.drive_path(b'D:\\test\\1\\2\\test.txt')
+            (20, [b'D', b':', [[[b'\\'], [b't', b'e', b's', b't']], [[b'\\'], [b'1']], [[b'\\'], [b'2']], [[b'\\'], [[b't', b'e', b's', b't'], [[b'.', [b't', b'x', b't']]]]]]])
+            >>>
+            """
+
+            result = PegParser.sequence(
+                [
+                    StandardMatch.is_letter,
+                    StandardMatch.check_char(58),
+                    StandardRules.Path._directories_or_file,
+                ],
+                data,
+                position,
+            )
+
+            if isinstance(result[1], MatchList):
+                result[1]._match_name = "drive_path"
+
+            return result
+
+        def nt_path(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[Iterable, None]]:
+            r"""
+            This function matchs NT path.
+
+            >>> StandardRules.Path.nt_path(b'\\\\?\\test')
+            (8, [b'\\', b'\\', b'?', [[[b'\\'], [b't', b'e', b's', b't']]]])
+            >>> StandardRules.Path.nt_path(b'\\\\.\\test\\')
+            (9, [b'\\', b'\\', b'.', [[[[b'\\'], [b't', b'e', b's', b't']]], b'\\']])
+            >>> StandardRules.Path.nt_path(b'\\\\.\\test\\1\\2\\test.txt')
+            (21, [b'\\', b'\\', b'.', [[[b'\\'], [b't', b'e', b's', b't']], [[b'\\'], [b'1']], [[b'\\'], [b'2']], [[b'\\'], [[b't', b'e', b's', b't'], [[b'.', [b't', b'x', b't']]]]]]])
+            >>>
+            """
+
+            result = PegParser.sequence(
+                [
+                    StandardMatch.check_char(92),
+                    StandardMatch.check_char(92),
+                    StandardMatch.or_check_chars(46, 63),
+                    StandardRules.Path._directories_or_file,
+                ],
+                data,
+                position,
+            )
+
+            if isinstance(result[1], MatchList):
+                result[1]._match_name = "nt_path"
+
+            return result
+
+        def relative_path(
+            data: bytes, position: int = 0, unix: bool = False
+        ) -> Tuple[
+            int,
+            Union[
+                Iterable[
+                    Union[
+                        bytes,
+                        Iterable[
+                            Iterable[
+                                Iterable[
+                                    Union[
+                                        bytes,
+                                        Iterable[
+                                            Union[
+                                                Iterable[
+                                                    Union[
+                                                        bytes, Iterable[bytes]
+                                                    ]
+                                                ],
+                                                bytes,
+                                            ]
+                                        ],
+                                    ]
+                                ]
+                            ]
+                        ],
+                    ]
+                ],
+                None,
+            ],
+        ]:
+            r"""
+            This function matchs relative path.
+
+            >>> StandardRules.Path.relative_path(b'.\\test')
+            (6, [b'.', [[[b'\\'], [b't', b'e', b's', b't']]]])
+            >>> StandardRules.Path.relative_path(b'.\\test\\')
+            (7, [b'.', [[[[b'\\'], [b't', b'e', b's', b't']]], b'\\']])
+            >>> StandardRules.Path.relative_path(b'.\\test\\1\\2\\test.txt')
+            (19, [b'.', [[[b'\\'], [b't', b'e', b's', b't']], [[b'\\'], [b'1']], [[b'\\'], [b'2']], [[b'\\'], [[b't', b'e', b's', b't'], [[b'.', [b't', b'x', b't']]]]]]])
+            >>>
+            """
+
+            result = PegParser.sequence(
+                [
+                    StandardMatch.check_char(46),
+                    lambda x, y: StandardRules.Path._directories_or_file(
+                        x, y, unix
+                    ),
+                ],
+                data,
+                position,
+            )
+
+            if isinstance(result[1], MatchList):
+                result[1]._match_name = "relative_path"
+
+            return result
+
+        def windows_path(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[Iterable, None]]:
+            r"""
+            This function matchs Windows path.
+
+            >>> StandardRules.Path.windows_path(b'.\\test')
+            (6, [b'.', [[[b'\\'], [b't', b'e', b's', b't']]]])
+            >>> StandardRules.Path.windows_path(b'.\\test\\')
+            (7, [b'.', [[[[b'\\'], [b't', b'e', b's', b't']]], b'\\']])
+            >>> StandardRules.Path.windows_path(b'.\\test\\1\\2\\test.txt')
+            (19, [b'.', [[[b'\\'], [b't', b'e', b's', b't']], [[b'\\'], [b'1']], [[b'\\'], [b'2']], [[b'\\'], [[b't', b'e', b's', b't'], [[b'.', [b't', b'x', b't']]]]]]])
+            >>> StandardRules.Path.windows_path(b'\\\\?\\test')
+            (8, [b'\\', b'\\', b'?', [[[b'\\'], [b't', b'e', b's', b't']]]])
+            >>> StandardRules.Path.windows_path(b'\\\\.\\test\\')
+            (9, [b'\\', b'\\', b'.', [[[[b'\\'], [b't', b'e', b's', b't']]], b'\\']])
+            >>> StandardRules.Path.windows_path(b'\\\\.\\test\\1\\2\\test.txt')
+            (21, [b'\\', b'\\', b'.', [[[b'\\'], [b't', b'e', b's', b't']], [[b'\\'], [b'1']], [[b'\\'], [b'2']], [[b'\\'], [[b't', b'e', b's', b't'], [[b'.', [b't', b'x', b't']]]]]]])
+            >>> StandardRules.Path.windows_path(b'D:\\test')
+            (7, [b'D', b':', [[[b'\\'], [b't', b'e', b's', b't']]]])
+            >>> StandardRules.Path.windows_path(b'D:\\test\\')
+            (8, [b'D', b':', [[[[b'\\'], [b't', b'e', b's', b't']]], b'\\']])
+            >>> StandardRules.Path.windows_path(b'D:\\test\\1\\2\\test.txt')
+            (20, [b'D', b':', [[[b'\\'], [b't', b'e', b's', b't']], [[b'\\'], [b'1']], [[b'\\'], [b'2']], [[b'\\'], [[b't', b'e', b's', b't'], [[b'.', [b't', b'x', b't']]]]]]])
+            >>>
+            """
+
+            result = PegParser.ordered_choice(
+                [
+                    StandardRules.Path.drive_path,
+                    StandardRules.Path.nt_path,
+                    StandardRules.Path.relative_path,
+                ],
+                data,
+                position,
+            )
+
+            if isinstance(result[1], MatchList):
+                result[1]._match_name = "windows_path"
+
+            return result
+
+        def linux_path(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[Iterable, None]]:
+            """
+            This function matchs Linux path.
+
+            >>> StandardRules.Path.linux_path(b'./test')
+            (6, [b'.', [[[b'/'], [b't', b'e', b's', b't']]]])
+            >>> StandardRules.Path.linux_path(b'/root/test')
+            (10, [[[b'/'], [b'r', b'o', b'o', b't']], [[b'/'], [b't', b'e', b's', b't']]])
+            >>> StandardRules.Path.linux_path(b'/root/test.txt')
+            (14, [[[b'/'], [b'r', b'o', b'o', b't']], [[b'/'], [[b't', b'e', b's', b't'], [[b'.', [b't', b'x', b't']]]]]])
+            >>> StandardRules.Path.linux_path(b'/1/2/3/.././../4/test.tar.gz')
+            (28, [[[b'/'], [b'1']], [[b'/'], [b'2']], [[b'/'], [b'3']], [[b'/'], [b'.', b'.']], [[b'/'], [b'.']], [[b'/'], [b'.', b'.']], [[b'/'], [b'4']], [[b'/'], [[b't', b'e', b's', b't'], [[b'.', [b't', b'a', b'r']], [b'.', [b'g', b'z']]]]]])
+            >>>
+            """
+
+            result = PegParser.ordered_choice(
+                [
+                    lambda d, p: StandardRules.Path.relative_path(d, p, True),
+                    lambda d, p: StandardRules.Path._directories_or_file(
+                        d, p, True
+                    ),
+                ],
+                data,
+                position,
+            )
+
+            if isinstance(result[1], MatchList):
+                result[1]._match_name = "linux_path"
+
+            return result
+
+        def path(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[Iterable, None]]:
+            r"""
+            This function matchs system path.
+
+            >>> StandardRules.Path.path(b'./test')
+            (6, [b'.', [[[b'/'], [b't', b'e', b's', b't']]]])
+            >>> StandardRules.Path.path(b'/root/test')
+            (10, [[[b'/'], [b'r', b'o', b'o', b't']], [[b'/'], [b't', b'e', b's', b't']]])
+            >>> StandardRules.Path.path(b'/root/test.txt')
+            (14, [[[b'/'], [b'r', b'o', b'o', b't']], [[b'/'], [[b't', b'e', b's', b't'], [[b'.', [b't', b'x', b't']]]]]])
+            >>> StandardRules.Path.path(b'/1/2/3/.././../4/test.tar.gz')
+            (28, [[[b'/'], [b'1']], [[b'/'], [b'2']], [[b'/'], [b'3']], [[b'/'], [b'.', b'.']], [[b'/'], [b'.']], [[b'/'], [b'.', b'.']], [[b'/'], [b'4']], [[b'/'], [[b't', b'e', b's', b't'], [[b'.', [b't', b'a', b'r']], [b'.', [b'g', b'z']]]]]])
+            >>> StandardRules.Path.path(b'.\\test')
+            (6, [b'.', [[[b'\\'], [b't', b'e', b's', b't']]]])
+            >>> StandardRules.Path.path(b'.\\test\\')
+            (7, [b'.', [[[[b'\\'], [b't', b'e', b's', b't']]], b'\\']])
+            >>> StandardRules.Path.path(b'.\\test\\1\\2\\test.txt')
+            (19, [b'.', [[[b'\\'], [b't', b'e', b's', b't']], [[b'\\'], [b'1']], [[b'\\'], [b'2']], [[b'\\'], [[b't', b'e', b's', b't'], [[b'.', [b't', b'x', b't']]]]]]])
+            >>> StandardRules.Path.path(b'\\\\?\\test')
+            (8, [b'\\', b'\\', b'?', [[[b'\\'], [b't', b'e', b's', b't']]]])
+            >>> StandardRules.Path.path(b'\\\\.\\test\\')
+            (9, [b'\\', b'\\', b'.', [[[[b'\\'], [b't', b'e', b's', b't']]], b'\\']])
+            >>> StandardRules.Path.path(b'\\\\.\\test\\1\\2\\test.txt')
+            (21, [b'\\', b'\\', b'.', [[[b'\\'], [b't', b'e', b's', b't']], [[b'\\'], [b'1']], [[b'\\'], [b'2']], [[b'\\'], [[b't', b'e', b's', b't'], [[b'.', [b't', b'x', b't']]]]]]])
+            >>> StandardRules.Path.path(b'D:\\test')
+            (7, [b'D', b':', [[[b'\\'], [b't', b'e', b's', b't']]]])
+            >>> StandardRules.Path.path(b'D:\\test\\')
+            (8, [b'D', b':', [[[[b'\\'], [b't', b'e', b's', b't']]], b'\\']])
+            >>> StandardRules.Path.path(b'D:\\test\\1\\2\\test.txt')
+            (20, [b'D', b':', [[[b'\\'], [b't', b'e', b's', b't']], [[b'\\'], [b'1']], [[b'\\'], [b'2']], [[b'\\'], [[b't', b'e', b's', b't'], [[b'.', [b't', b'x', b't']]]]]]])
+            >>>
+            """
+
+            result = PegParser.ordered_choice(
+                [
+                    StandardRules.Path.linux_path,
+                    StandardRules.Path.windows_path,
+                ],
+                data,
+                position,
+            )
+
+            if isinstance(result[1], MatchList):
+                result[1]._match_name = "system_path"
+
+            return result
+
+
+def match_getter(
+    data: Iterable[Union[bytes, bool, Iterable]],
+    process: Callable[str, bytearray],
+) -> None:
     """
     This function gets all matchs and call `process`
     with `_match_name` and `data` as parameters.
@@ -4750,7 +5448,10 @@ def match_getter(data: Iterable[Union[bytes, bool, Iterable]], process: Callable
 
     process_element(data)
 
-def get_ordered_matchs(data: Iterable[Union[bytes, bool, Iterable]]) -> List[Tuple[str, bytearray]]:
+
+def get_ordered_matchs(
+    data: Iterable[Union[bytes, bool, Iterable]]
+) -> List[Tuple[str, bytearray]]:
     r"""
     This function returns the ordered match into a list of tuple.
 
@@ -4758,12 +5459,13 @@ def get_ordered_matchs(data: Iterable[Union[bytes, bool, Iterable]]) -> List[Tup
     [('csv', bytearray(b'"1","","other"\n"2"\n"3","test"')), ('csv_line', bytearray(b'"1","","other"')), ('csv_quoted_value', bytearray(b'"1"')), ('csv_value', bytearray(b'1')), ('csv_values', bytearray(b',"","other"')), ('csv_quoted_value', bytearray(b'""')), ('csv_value', bytearray(b'')), ('csv_quoted_value', bytearray(b'"other"')), ('csv_value', bytearray(b'other')), ('csv_line', bytearray(b'"2"')), ('csv_quoted_value', bytearray(b'"2"')), ('csv_value', bytearray(b'2')), ('csv_values', bytearray(b'')), ('csv_line', bytearray(b'"3","test"')), ('csv_quoted_value', bytearray(b'"3"')), ('csv_value', bytearray(b'3')), ('csv_values', bytearray(b',"test"')), ('csv_quoted_value', bytearray(b'"test"')), ('csv_value', bytearray(b'test'))]
     >>> get_ordered_matchs(StandardRules.Csv.multi(b'"1","","other"\n"2"\n"3","test"\n\r\n"1","","other"\r\n"2"\r\n"3","test"')[1])
     [('multi_csv', bytearray(b'"1","","other"\n"2"\n"3","test"\n\r\n"1","","other"\r\n"2"\r\n"3","test"')), ('csv', bytearray(b'"1","","other"\n"2"\n"3","test"')), ('csv_line', bytearray(b'"1","","other"')), ('csv_quoted_value', bytearray(b'"1"')), ('csv_value', bytearray(b'1')), ('csv_values', bytearray(b',"","other"')), ('csv_quoted_value', bytearray(b'""')), ('csv_value', bytearray(b'')), ('csv_quoted_value', bytearray(b'"other"')), ('csv_value', bytearray(b'other')), ('csv_line', bytearray(b'"2"')), ('csv_quoted_value', bytearray(b'"2"')), ('csv_value', bytearray(b'2')), ('csv_values', bytearray(b'')), ('csv_line', bytearray(b'"3","test"')), ('csv_quoted_value', bytearray(b'"3"')), ('csv_value', bytearray(b'3')), ('csv_values', bytearray(b',"test"')), ('csv_quoted_value', bytearray(b'"test"')), ('csv_value', bytearray(b'test')), ('csv', bytearray(b'"1","","other"\r\n"2"\r\n"3","test"')), ('csv_line', bytearray(b'"1","","other"')), ('csv_quoted_value', bytearray(b'"1"')), ('csv_value', bytearray(b'1')), ('csv_values', bytearray(b',"","other"')), ('csv_quoted_value', bytearray(b'""')), ('csv_value', bytearray(b'')), ('csv_quoted_value', bytearray(b'"other"')), ('csv_value', bytearray(b'other')), ('csv_line', bytearray(b'"2"')), ('csv_quoted_value', bytearray(b'"2"')), ('csv_value', bytearray(b'2')), ('csv_values', bytearray(b'')), ('csv_line', bytearray(b'"3","test"')), ('csv_quoted_value', bytearray(b'"3"')), ('csv_value', bytearray(b'3')), ('csv_values', bytearray(b',"test"')), ('csv_quoted_value', bytearray(b'"test"')), ('csv_value', bytearray(b'test'))]
-    >>> 
+    >>>
     """
 
     matches = []
     match_getter(data, lambda name, data: matches.append((name, data)))
     return matches
+
 
 def get_matchs(
     data: Iterable[Union[bytes, bool, Iterable]]
@@ -4811,7 +5513,10 @@ def csv_parse(data: bytes) -> Iterable[Tuple[str]]:
             raise error
         yield tuple(x.decode() for x in get_matchs(result)["csv_value"])
 
-def get_json(data: bytes, permissive: bool = False) -> Union[Union[List, Dict, bool, int, float, None]]:
+
+def get_json(
+    data: bytes, permissive: bool = False
+) -> Union[Union[List, Dict, bool, int, float, None]]:
     r"""
     This function returns the JSON content as python object.
 
@@ -4819,17 +5524,24 @@ def get_json(data: bytes, permissive: bool = False) -> Union[Union[List, Dict, b
     {'1': None, '2': 1.5, '3': {'test': True, '1': 2}, '4': [1, 2, False]}
     >>> get_json(b"[1, 2.5, unDefiNed nIl ,,{'test\\n' trUE fALSe nUll},, ]", True)
     [1, 2.5, None, None, {'test\n': True, False: None}]
-    >>> 
+    >>>
     """
 
-    position, matchs = (StandardRules.Json.permissive_full if permissive else StandardRules.Json.full)(data)
+    position, matchs = (
+        StandardRules.Json.permissive_full
+        if permissive
+        else StandardRules.Json.full
+    )(data)
 
     if matchs is not None and len(data) == position:
         return get_json_from_ordered_matchs(get_ordered_matchs(matchs))
 
-    raise ValueError('Invalid JSON at:' + str(position))
+    raise ValueError("Invalid JSON at:" + str(position))
 
-def get_json_from_ordered_matchs(data: List[Tuple[str, bytearray]]) -> Union[Union[List, Dict, bool, int, float, None]]:
+
+def get_json_from_ordered_matchs(
+    data: List[Tuple[str, bytearray]]
+) -> Union[Union[List, Dict, bool, int, float, None]]:
     """
     This function returns a python object from the ordered matchs.
 
@@ -4839,13 +5551,17 @@ def get_json_from_ordered_matchs(data: List[Tuple[str, bytearray]]) -> Union[Uni
     """
 
     def call(data):
-        if function := functions.get(data[0][0][11:] if data[0][0].startswith('permissive_') else data[0][0]):
+        if function := functions.get(
+            data[0][0][11:]
+            if data[0][0].startswith("permissive_")
+            else data[0][0]
+        ):
             return function(data[0][1], data[1:])
         return call(data[1:])
 
     def start_dict(data, matchs):
         data = {}
-        while matchs[0][0] != 'end_dict':
+        while matchs[0][0] != "end_dict":
             key = call(matchs)[0]
             matchs = matchs[1:]
             value, matchs = call(matchs)
@@ -4854,7 +5570,7 @@ def get_json_from_ordered_matchs(data: List[Tuple[str, bytearray]]) -> Union[Uni
 
     def start_list(data, matchs):
         data = []
-        while matchs[0][0] != 'end_list':
+        while matchs[0][0] != "end_list":
             value, matchs = call(matchs)
             data.append(value)
         return data, matchs[1:]
@@ -4869,7 +5585,7 @@ def get_json_from_ordered_matchs(data: List[Tuple[str, bytearray]]) -> Union[Uni
         return int(data.decode(), 8), matchs
 
     def strings(data, matchs):
-        return decode(data[1:-1].decode(), 'unicode_escape'), matchs
+        return decode(data[1:-1].decode(), "unicode_escape"), matchs
 
     def float2(data, matchs):
         return float(data.decode()), matchs[2:]
@@ -4884,10 +5600,13 @@ def get_json_from_ordered_matchs(data: List[Tuple[str, bytearray]]) -> Union[Uni
         return False, matchs
 
     functions = locals()
-    functions['float'] = functions['float2']
+    functions["float"] = functions["float2"]
     return call(data)[0]
 
-def mjson_file_parse(file: _BufferedIOBase, permissive: bool = False) -> Iterable[Union[List, Dict, bool, int, float, None]]:
+
+def mjson_file_parse(
+    file: _BufferedIOBase, permissive: bool = False
+) -> Iterable[Union[List, Dict, bool, int, float, None]]:
     r"""
     This generator parses mJSON file and yield JSON for each line.
 
@@ -4896,18 +5615,23 @@ def mjson_file_parse(file: _BufferedIOBase, permissive: bool = False) -> Iterabl
     [{}, {'1': 1, '2': [True, False, None, 1.5, {'test': []}]}]
     >>> list(mjson_file_parse(BytesIO(b"{}\n{'1' 1,'2' [true false,null 1.5 {'test' []},,,],, }"), True))
     [{}, {'1': 1, '2': [True, False, None, 1.5, {'test': []}]}]
-    >>> 
+    >>>
     """
 
     file_position = file.tell()
-    parser = StandardRules.Json.permissive_full if permissive else StandardRules.Json.full
+    parser = (
+        StandardRules.Json.permissive_full
+        if permissive
+        else StandardRules.Json.full
+    )
     for line in file:
         if line[-1] == 10:
             line = line[:-1]
         position, data = parser(line)
         if data is None or len(line) != position:
-            raise ValueError('Invalid JSON at:', position + file_position)
+            raise ValueError("Invalid JSON at:", position + file_position)
         yield get_json_from_ordered_matchs(get_ordered_matchs(data))
+
 
 def csv_file_parse(file: _BufferedIOBase) -> Iterable[List[str]]:
     r"""
@@ -4918,7 +5642,7 @@ def csv_file_parse(file: _BufferedIOBase) -> Iterable[List[str]]:
     [('1', '', 'other'), ('2',), ('3', 'test')]
     >>> list(csv_file_parse(BytesIO(b'"1","","other"\n"2"\n"3","test"\n')))
     [('1', '', 'other'), ('2',), ('3', 'test')]
-    >>> 
+    >>>
     """
 
     data = True
@@ -4957,11 +5681,12 @@ def csv_files_parse(file: _BufferedIOBase) -> Iterable[List[str]]:
             yield data
             error = False
         except ValueError as e:
-            if not hasattr(e, 'position'):
+            if not hasattr(e, "position"):
                 raise e
             file.seek(e.position)
             yield data
             data = []
+
 
 def get_http_content(data: Iterable[Union[bytes, Iterable]]) -> Tuple[
     Dict[str, List[bytearray]],
@@ -5059,13 +5784,117 @@ def parse_http_response(data: bytes) -> HttpResponse:
     )
 
 
+def match(
+    rule: Callable, data: bytes, minimum_length: int = 0
+) -> Union[None, bytes]:
+    r"""
+    This function returns the full match for a rule on data.
+
+    >>> match(StandardRules.Path.path, b'D:\\test\\1\\2\\test.txt\0', 7)
+    b'D:\\test\\1\\2\\test.txt'
+    >>> match(StandardRules.Path.path, b'\\\\?\\test\\1\\2\\test.txt**', 7)
+    b'\\\\?\\test\\1\\2\\test.txt'
+    >>> match(StandardRules.Path.path, b'/1/2/3/.././../4/test.tar.gz\7', 7)
+    b'/1/2/3/.././../4/test.tar.gz'
+    >>> match(StandardRules.Path.path, b'./test.txt\0\1', 7)
+    b'./test.txt'
+    >>> 
+    """
+
+    position, match = rule(data)
+
+    if match is not None and minimum_length <= position:
+        return data[:position]
+
+
 StandardRules_Url = StandardRules.Url
 StandardRules_Csv = StandardRules.Csv
+StandardRules_Path = StandardRules.Path
 StandardRules_Json = StandardRules.Json
 StandardRules_Http = StandardRules.Http
 StandardRules_Types = StandardRules.Types
 StandardRules_Format = StandardRules.Format
 StandardRules_Network = StandardRules.Network
+
+formats = {
+    "json": Format(
+        "json", partial(match, StandardRules.Json.full), lambda x: x
+    ),
+    "http_response": Format(
+        "http_response",
+        partial(match, StandardRules.Http.response),
+        lambda x: x,
+    ),
+    "http_request": Format(
+        "http_request", partial(match, StandardRules.Http.request), lambda x: x
+    ),
+    "uri": Format("uri", partial(match, StandardRules.Url.full), lambda x: x),
+    "windows_path": Format(
+        "windows_path",
+        partial(match, StandardRules.Path.windows_path),
+        lambda x: x,
+    ),
+    "linux_path": Format(
+        "linux_path",
+        partial(match, StandardRules.Path.linux_path),
+        lambda x: x,
+    ),
+    "filename": Format(
+        "filename",
+        partial(match, StandardRules.Path.filename_extension),
+        lambda x: x,
+    ),
+    "host_port": Format(
+        "host_port",
+        partial(match, StandardRules.Network.host_port),
+        lambda x: x,
+    ),
+    "ipvfuture": Format(
+        "ipvfuture",
+        partial(match, StandardRules.Network.ipvfuture),
+        lambda x: x,
+    ),
+    "ipv6_zoneid": Format(
+        "ipv6_zoneid",
+        partial(match, StandardRules.Network.ipv6_zoneid),
+        lambda x: x,
+    ),
+    "ipv6": Format(
+        "ipv6", partial(match, StandardRules.Network.ipv6), lambda x: x
+    ),
+    "ipv4": Format(
+        "ipv4", partial(match, StandardRules.Network.ipv4), lambda x: x
+    ),
+    "fqdn": Format(
+        "fqdn", partial(match, StandardRules.Network.fqdn), lambda x: x
+    ),
+    "csv": Format("csv", partial(match, StandardRules.Csv.full), lambda x: x),
+    "base85": Format(
+        "base85", partial(match, StandardRules.Format.base85), b85decode
+    ),
+    "base64": Format(
+        "base64", partial(match, StandardRules.Format.base64), b64decode
+    ),
+    "base64_urlsafe": Format(
+        "base64_urlsafe",
+        partial(match, StandardRules.Format.base64_urlsafe),
+        b64decode,
+    ),
+    "base32": Format(
+        "base32", partial(match, StandardRules.Format.base32), b32decode
+    ),
+    "base32_lower": Format(
+        "base32_lower",
+        partial(match, StandardRules.Format.base32),
+        lambda x: b32decode(x.upper()),
+    ),
+    "base32_insensitive": Format(
+        "base32_insensitive",
+        partial(match, StandardRules.Format.base32),
+        lambda x: b32decode(x.upper()),
+    ),
+    "hex": Format("hex", partial(match, StandardRules.Format.hex), unhexlify),
+}
 
 if __name__ == "__main__":
     from doctest import testmod
