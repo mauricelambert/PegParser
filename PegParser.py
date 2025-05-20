@@ -84,7 +84,7 @@ Tests:
     PegParser.StandardRules.Url._optional_characters_subdelims_colon_commat_slot_quest
     PegParser.get_http_content
     PegParser.match_getter
-104 items passed all tests:
+105 items passed all tests:
    3 tests in PegParser.HttpRequest.__bytes__
    3 tests in PegParser.HttpResponse.__bytes__
    3 tests in PegParser.StandardMatch.is_blank
@@ -111,6 +111,7 @@ Tests:
    6 tests in PegParser.StandardRules.Format.base85
    4 tests in PegParser.StandardRules.Format.blanks
    6 tests in PegParser.StandardRules.Format.hex
+   6 tests in PegParser.StandardRules.Format.hexadecimal
    6 tests in PegParser.StandardRules.Format.integer
    6 tests in PegParser.StandardRules.Format.octal
    4 tests in PegParser.StandardRules.Format.optional_blanks
@@ -189,12 +190,12 @@ Tests:
    3 tests in PegParser.mjson_file_parse
    1 tests in PegParser.parse_http_request
    1 tests in PegParser.parse_http_response
-542 tests in 155 items.
-542 passed and 0 failed.
+548 tests in 156 items.
+548 passed and 0 failed.
 Test passed.
 """
 
-__version__ = "1.1.0"
+__version__ = "1.1.1"
 __author__ = "Maurice Lambert"
 __author_email__ = "mauricelambert434@gmail.com"
 __maintainer__ = "Maurice Lambert"
@@ -1346,7 +1347,7 @@ class StandardRules:
             data: bytes, position: int = 0
         ) -> Tuple[int, Union[None, Iterable[bytes]]]:
             """
-            This method checks for a word.
+            This method checks for hexadecimal characters.
 
             >>> StandardRules.Format.hex(b"abcdef")
             (6, [b'a', b'b', b'c', b'd', b'e', b'f'])
@@ -1365,6 +1366,42 @@ class StandardRules:
 
             result = PegParser.one_or_more(
                 StandardMatch.is_hex,
+                data,
+                position,
+            )
+
+            if isinstance(result[1], MatchList):
+                result[1]._match_name = "hex"
+
+            return result
+
+        def hexadecimal(
+            data: bytes, position: int = 0
+        ) -> Tuple[int, Union[None, Iterable[Iterable[bytes]]]]:
+            """
+            This method checks for multiples pairs of hexadecimal characters.
+
+            >>> StandardRules.Format.hexadecimal(b"abcdef")
+            (6, [[b'a', b'b'], [b'c', b'd'], [b'e', b'f']])
+            >>> StandardRules.Format.hexadecimal(b"abc0123")
+            (6, [[b'a', b'b'], [b'c', b'0'], [b'1', b'2']])
+            >>> StandardRules.Format.hexadecimal(b"0123abc")
+            (6, [[b'0', b'1'], [b'2', b'3'], [b'a', b'b']])
+            >>> StandardRules.Format.hexadecimal(b"+123")
+            (0, None)
+            >>> StandardRules.Format.hexadecimal(b"0B2;")
+            (2, [[b'0', b'B']])
+            >>> StandardRules.Format.hexadecimal(b"a ")
+            (0, None)
+            >>>
+            """
+
+            result = PegParser.one_or_more(
+                lambda d, p: PegParser.sequence(
+                    [StandardMatch.is_hex, StandardMatch.is_hex],
+                    d,
+                    p,
+                ),
                 data,
                 position,
             )
@@ -2330,7 +2367,7 @@ class StandardRules:
                         autority_path,
                         StandardRules.Url.path,
                         StandardRules.Url.path_rootless,
-                        lambda d, p: PegParser.not_predicate(47, d, p),
+                        lambda d, p: PegParser.not_predicate(StandardMatch.check_char(47), d, p),
                     ],
                     data,
                     position,
@@ -4922,8 +4959,8 @@ class StandardRules:
 
             >>> StandardRules.Path.base_filename(b'test')
             (4, [b't', b'e', b's', b't'])
-            >>> StandardRules.Path.base_filename(b'test*test')
-            (4, [b't', b'e', b's', b't'])
+            >>> StandardRules.Path.base_filename(b't test*test')
+            (6, [b't', b' ', b't', b'e', b's', b't'])
             >>> StandardRules.Path.base_filename(b'$MFT')
             (4, [b'$', b'M', b'F', b'T'])
             >>> StandardRules.Path.base_filename(b'\\test')
@@ -4937,6 +4974,7 @@ class StandardRules:
                         StandardMatch.is_letter,
                         StandardMatch.is_digit,
                         StandardMatch.or_check_chars(
+                            32,
                             33,
                             36,
                             37,
@@ -5893,7 +5931,7 @@ formats = {
         partial(match, StandardRules.Format.base32),
         lambda x: b32decode(x.upper()),
     ),
-    "hex": Format("hex", partial(match, StandardRules.Format.hex), unhexlify),
+    "hex": Format("hex", partial(match, StandardRules.Format.hexadecimal), unhexlify),
 }
 
 if __name__ == "__main__":
