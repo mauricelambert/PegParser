@@ -84,7 +84,7 @@ Tests:
     PegParser.StandardRules.Url._optional_characters_subdelims_colon_commat_slot_quest
     PegParser.get_http_content
     PegParser.match_getter
-105 items passed all tests:
+107 items passed all tests:
    3 tests in PegParser.HttpRequest.__bytes__
    3 tests in PegParser.HttpResponse.__bytes__
    3 tests in PegParser.StandardMatch.is_blank
@@ -115,6 +115,8 @@ Tests:
    6 tests in PegParser.StandardRules.Format.integer
    6 tests in PegParser.StandardRules.Format.octal
    4 tests in PegParser.StandardRules.Format.optional_blanks
+   4 tests in PegParser.StandardRules.Format.string_null_terminated_length
+   4 tests in PegParser.StandardRules.Format.unicode_null_terminated_length
    5 tests in PegParser.StandardRules.Format.word
    2 tests in PegParser.StandardRules.Http.field_name
    2 tests in PegParser.StandardRules.Http.field_value
@@ -190,12 +192,11 @@ Tests:
    3 tests in PegParser.mjson_file_parse
    1 tests in PegParser.parse_http_request
    1 tests in PegParser.parse_http_response
-548 tests in 156 items.
-548 passed and 0 failed.
-Test passed.
+556 tests in 158 items.
+556 passed and 0 failed.
 """
 
-__version__ = "1.1.1"
+__version__ = "1.1.2"
 __author__ = "Maurice Lambert"
 __author_email__ = "mauricelambert434@gmail.com"
 __maintainer__ = "Maurice Lambert"
@@ -234,9 +235,23 @@ from codecs import decode
 
 @dataclass
 class Format:
+    """
+    Format is a dataclass used in formats dict to list, check,
+    decode and verify probable validity for all formats.
+
+    Formats was defined to check untrusted/identified strings,
+    there are probably lot of False positive because multiples formats
+    were very flexible. The `probable_true_positive` is used to identify
+    a probable real value for the format (by default return False),
+    and `probable_false_positive` is used to identify a probable false
+    value for the format (by default return True.)
+    """
+
     name: str
     match: Callable
     decode: Callable
+    probable_true_positive: Callable = lambda x: False
+    probable_false_positive: Callable = lambda x: True
 
 
 @dataclass
@@ -507,14 +522,15 @@ class PegParser:
 
 class StandardMatch:
     """
-    This class implements method for standard match element.
+    This class implements methods to match standard characters groups.
     """
 
     def is_letter(
         data: bytes, position: int
     ) -> Tuple[int, Union[None, bytes]]:
         """
-        This method checks a position for an ASCII letter (upper or lower case).
+        This method checks a position for an ASCII letter
+        (upper or lower case).
 
         >>> StandardMatch.is_letter(b"a1Bc", 0)
         (1, b'a')
@@ -751,7 +767,8 @@ class StandardMatch:
 
     def or_check_chars(*chars: int) -> Callable:
         """
-        Generic method to generate wrapper for `check_char` with `ordered_choice`.
+        Generic method to generate wrapper for `check_char`
+        with `ordered_choice`.
         """
 
         def checks(
@@ -773,7 +790,7 @@ class StandardRules:
 
     class Types:
         """
-        This sub-class implements standard types parsing rules.
+        This class implements standard types parsing rules.
         """
 
         def digits(
@@ -1214,7 +1231,7 @@ class StandardRules:
 
     class Format:
         """
-        This sub-class implements standard data formats parsing rules.
+        This class implements standard data formats parsing rules.
         """
 
         def integer(
@@ -1808,6 +1825,105 @@ class StandardRules:
 
             return result
 
+        def string_null_terminated_length(minimum_length: int = 3) -> Callable:
+            r"""
+            This function matchs null terminated string
+            (like in C char* = "...") with `length` characters.
+
+            >>> StandardRules.Format.string_null_terminated_length()(b"abcdef\0")
+            (7, [b'a', b'b', b'c', [b'd', b'e', b'f'], b'\x00'])
+            >>> StandardRules.Format.string_null_terminated_length(3)(b"abc\0")
+            (4, [b'a', b'b', b'c', [], b'\x00'])
+            >>> StandardRules.Format.string_null_terminated_length(5)(b"abc\0")
+            (0, None)
+            >>> StandardRules.Format.string_null_terminated_length(5)(b"a\1bcdef\0")
+            (0, None)
+            >>>
+            """
+
+            def string_null_terminated(
+                data: bytes, position: int = 0
+            ) -> Tuple[
+                int, Union[None, Iterable[Union[bytes, Iterable[bytes]]]]
+            ]:
+                """
+                This function matchs null terminated string
+                (like in C char* = "...").
+                """
+
+                return PegParser.sequence(
+                    [
+                        *[StandardMatch.is_printable] * minimum_length,
+                        lambda d, p: PegParser.zero_or_more(
+                            StandardMatch.is_printable, d, p
+                        ),
+                        StandardMatch.check_char(0),
+                    ],
+                    data,
+                    position,
+                )
+
+            return string_null_terminated
+
+        def unicode_null_terminated_length(
+            minimum_length: int = 3,
+        ) -> Callable:
+            r"""
+            This function matchs null terminated string
+            (like in C char* = "...") with `length` characters.
+
+            >>> StandardRules.Format.unicode_null_terminated_length()(b"a\0b\0c\0d\0e\0f\0\0\0")
+            (14, [[b'a', b'\x00'], [b'b', b'\x00'], [b'c', b'\x00'], [[b'd', b'\x00'], [b'e', b'\x00'], [b'f', b'\x00']], b'\x00', b'\x00'])
+            >>> StandardRules.Format.unicode_null_terminated_length(3)(b"a\0b\0c\0\0\0")
+            (8, [[b'a', b'\x00'], [b'b', b'\x00'], [b'c', b'\x00'], [], b'\x00', b'\x00'])
+            >>> StandardRules.Format.unicode_null_terminated_length(5)(b"a\0b\0c\0\0\0")
+            (0, None)
+            >>> StandardRules.Format.unicode_null_terminated_length(5)(b"a\1b\0c\0d\0e\0f\0\0\0")
+            (0, None)
+            >>>
+            """
+
+            def unicode_null_terminated(
+                data: bytes, position: int = 0
+            ) -> Tuple[
+                int,
+                Union[
+                    None,
+                    Iterable[
+                        Union[bytes, Iterable[Union[bytes, Iterable[bytes]]]]
+                    ],
+                ],
+            ]:
+                """
+                This function matchs unicode terminated string
+                (like in C LPWSTR = L"...").
+                """
+
+                def unicode_character(data: bytes, position: int):
+                    return PegParser.sequence(
+                        [
+                            StandardMatch.is_printable,
+                            StandardMatch.check_char(0),
+                        ],
+                        data,
+                        position,
+                    )
+
+                return PegParser.sequence(
+                    [
+                        *[unicode_character] * minimum_length,
+                        lambda d, p: PegParser.zero_or_more(
+                            unicode_character, d, p
+                        ),
+                        StandardMatch.check_char(0),
+                        StandardMatch.check_char(0),
+                    ],
+                    data,
+                    position,
+                )
+
+            return unicode_null_terminated
+
     class Url:
         """
         This class implements methods to parse an URL.
@@ -2034,7 +2150,8 @@ class StandardRules:
             ],
         ]:
             """
-            This method checks the form data format used in POST body and GET query.
+            This method checks the form data format used in POST
+            body and GET query.
 
             >>> StandardRules.Url.form_data(b"abc=def&def=abc")
             (15, [[[b'a', b'b', b'c'], b'=', [b'd', b'e', b'f']], [[b'&', [[b'd', b'e', b'f'], b'=', [b'a', b'b', b'c']]]]])
@@ -2367,7 +2484,9 @@ class StandardRules:
                         autority_path,
                         StandardRules.Url.path,
                         StandardRules.Url.path_rootless,
-                        lambda d, p: PegParser.not_predicate(StandardMatch.check_char(47), d, p),
+                        lambda d, p: PegParser.not_predicate(
+                            StandardMatch.check_char(47), d, p
+                        ),
                     ],
                     data,
                     position,
@@ -4385,7 +4504,8 @@ class StandardRules:
             Union[None, List[Union[bytes, List[Union[bytes, List[bytes]]]]]],
         ]:
             r"""
-            This function checks for permissive `simple` value (null, boolean, integer, float, string).
+            This function checks for permissive `simple` value
+            (null, boolean, integer, float, string).
 
             >>> StandardRules.Json.permissive_simple_value(b'nUll')
             (4, [b'n', b'U', b'l', b'l'])
@@ -4912,8 +5032,8 @@ class StandardRules:
             data: bytes, position: int = 0
         ) -> Tuple[int, Union[None, List]]:
             """
-            This function matchs all JSON permissive type (dict, list, string, float,
-            integer, boolean, null).
+            This function matchs all JSON permissive type
+            (dict, list, string, float, integer, boolean, null).
 
             >>> StandardRules.Json.permissive_full(b'{}')
             (2, [[b'{'], [], [], [b'}']])
@@ -5836,7 +5956,7 @@ def match(
     b'/1/2/3/.././../4/test.tar.gz'
     >>> match(StandardRules.Path.path, b'./test.txt\0\1', 7)
     b'./test.txt'
-    >>> 
+    >>>
     """
 
     position, match = rule(data)
@@ -5854,28 +5974,81 @@ StandardRules_Types = StandardRules.Types
 StandardRules_Format = StandardRules.Format
 StandardRules_Network = StandardRules.Network
 
+def host_port_true_positive(host_port: bytes) -> bool:
+    host, port = host_port.rsplit(b":", 1)
+    return len(host_port) > 15 and len(port) > 2 and (b"." in host or b"[" in host)
+
+def host_port_false_positive(host_port: bytes) -> bool:
+    host, port = host_port.rsplit(b":", 1)
+    return len(host_port) < 10 or len(port) < 2 or not (b"." in host or b"[" in host)
+
+def linux_path_true_positive(linux_path: bytes) -> bool:
+    if len(linux_path) < 15:
+        return False
+    splitted = linux_path.split(b"/")
+    splitted_length = len(splitted)
+    if splitted_length < 3:
+        return False
+    root, *directories, file = splitted
+    if not root and splitted_length < 4:
+        return False
+    return all(46 <= character <= 122 for character in linux_path)
+
+def linux_path_false_positive(linux_path: bytes) -> bool:
+    if len(linux_path) < 9:
+        return True
+    splitted = linux_path.split(b"/")
+    splitted_length = len(splitted)
+    if splitted_length < 3:
+        return True
+    root, *directories, file = splitted
+    if not root and splitted_length < 4:
+        return True
+    return not all(directories)
+
 formats = {
     "json": Format(
-        "json", partial(match, StandardRules.Json.full), lambda x: x
+        "json",
+        partial(match, StandardRules.Json.full),
+        lambda x: x,
+        lambda x: StandardRules.Json.dict(x)[1] is not None
+        or StandardRules.Json.list(x)[1] is not None,
+        lambda x: len(x) < 20,
     ),
     "http_response": Format(
         "http_response",
         partial(match, StandardRules.Http.response),
         lambda x: x,
+        lambda x: True,
+        lambda x: False,
     ),
     "http_request": Format(
-        "http_request", partial(match, StandardRules.Http.request), lambda x: x
+        "http_request",
+        partial(match, StandardRules.Http.request),
+        lambda x: x,
+        lambda x: True,
+        lambda x: False,
     ),
-    "uri": Format("uri", partial(match, StandardRules.Url.full), lambda x: x),
+    "uri": Format(
+        "uri",
+        partial(match, StandardRules.Url.full),
+        lambda x: x,
+        lambda x: b":" not in x[-10:] and b":" not in x[:4],
+        lambda x: b":" in x[-6:] or b":" in x[:3],
+    ),
     "windows_path": Format(
         "windows_path",
         partial(match, StandardRules.Path.windows_path),
         lambda x: x,
+        lambda x: len(x) > 20,
+        lambda x: len(x) < 10,
     ),
     "linux_path": Format(
         "linux_path",
         partial(match, StandardRules.Path.linux_path),
         lambda x: x,
+        linux_path_true_positive,
+        linux_path_false_positive,
     ),
     "filename": Format(
         "filename",
@@ -5886,52 +6059,114 @@ formats = {
         "host_port",
         partial(match, StandardRules.Network.host_port),
         lambda x: x,
+        host_port_true_positive,
+        host_port_false_positive,
     ),
     "ipvfuture": Format(
         "ipvfuture",
         partial(match, StandardRules.Network.ipvfuture),
         lambda x: x,
+        lambda x: False,
+        lambda x: True,
     ),
     "ipv6_zoneid": Format(
         "ipv6_zoneid",
         partial(match, StandardRules.Network.ipv6_zoneid),
         lambda x: x,
+        lambda x: len(x) > 8,
+        lambda x: False,
     ),
     "ipv6": Format(
-        "ipv6", partial(match, StandardRules.Network.ipv6), lambda x: x
+        "ipv6",
+        partial(match, StandardRules.Network.ipv6),
+        lambda x: x,
+        lambda x: len(x) > 8,
+        lambda x: len(x) <= 3,
     ),
     "ipv4": Format(
-        "ipv4", partial(match, StandardRules.Network.ipv4), lambda x: x
+        "ipv4",
+        partial(match, StandardRules.Network.ipv4),
+        lambda x: x,
+        lambda x: len(x) > 12,
+        lambda x: len(x) <= 8,
     ),
     "fqdn": Format(
-        "fqdn", partial(match, StandardRules.Network.fqdn), lambda x: x
+        "fqdn",
+        partial(match, StandardRules.Network.fqdn),
+        lambda x: x,
+        lambda x: len(x) > 15 and 1 < len(x.split(b".")[-1]) < 5,
+        lambda x: len(x) < 8 or not (2 < len(x.split(b".")[-1]) < 5),
     ),
-    "csv": Format("csv", partial(match, StandardRules.Csv.full), lambda x: x),
+    "csv": Format(
+        "csv",
+        partial(match, StandardRules.Csv.full),
+        lambda x: x,
+        lambda x: len(x) > 50 and len(x.split()) > 10,
+        lambda x: len(x) < 30 or len(x.split()) < 4,
+    ),
     "base85": Format(
-        "base85", partial(match, StandardRules.Format.base85), b85decode
+        "base85",
+        partial(match, StandardRules.Format.base85),
+        b85decode,
+        lambda x: len(x) > 70 and len(set(x)) > 25,
+        lambda x: len(x) < 30 or len(set(x)) < 15,
     ),
     "base64": Format(
-        "base64", partial(match, StandardRules.Format.base64), b64decode
+        "base64",
+        partial(match, StandardRules.Format.base64),
+        b64decode,
+        lambda x: len(x) > 20 and len(set(x)) > 10 and x.endswith(b"="),
+        lambda x: len(x) < 10 or len(set(x)) < 5,
     ),
     "base64_urlsafe": Format(
         "base64_urlsafe",
         partial(match, StandardRules.Format.base64_urlsafe),
         b64decode,
+        lambda x: len(x) > 20 and len(set(x)) > 10 and x.endswith(b"="),
+        lambda x: len(x) < 10 or len(set(x)) < 5,
     ),
     "base32": Format(
-        "base32", partial(match, StandardRules.Format.base32), b32decode
+        "base32",
+        partial(match, StandardRules.Format.base32),
+        b32decode,
+        lambda x: len(x) > 22 and len(set(x)) > 8 and x.endswith(b"="),
+        lambda x: len(x) < 12 or len(set(x)) < 5,
     ),
     "base32_lower": Format(
         "base32_lower",
         partial(match, StandardRules.Format.base32),
         lambda x: b32decode(x.upper()),
+        lambda x: len(x) > 22 and len(set(x)) > 8 and x.endswith(b"="),
+        lambda x: len(x) < 12 or len(set(x)) < 5,
     ),
     "base32_insensitive": Format(
         "base32_insensitive",
         partial(match, StandardRules.Format.base32),
         lambda x: b32decode(x.upper()),
+        lambda x: len(x) > 22 and len(set(x)) > 8 and x.endswith(b"="),
+        lambda x: len(x) < 12 or len(set(x)) < 5,
     ),
-    "hex": Format("hex", partial(match, StandardRules.Format.hexadecimal), unhexlify),
+    "hex": Format(
+        "hex",
+        partial(match, StandardRules.Format.hexadecimal),
+        unhexlify,
+        lambda x: len(x) > 20 and len(set(x)) > 7,
+        lambda x: len(x) < 10 or len(set(x)) < 4,
+    ),
+    "string_null_terminated": Format(
+        "string_null_terminated",
+        partial(match, StandardRules.Format.string_null_terminated_length(5)),
+        lambda x: x[:-1],
+        lambda x: len(x) > 15 and len(set(x)) > 8,
+        lambda x: len(x) < 8 or len(set(x)) < 5,
+    ),
+    "unicode_null_terminated": Format(
+        "unicode_null_terminated",
+        partial(match, StandardRules.Format.unicode_null_terminated_length(5)),
+        lambda x: x.replace(b"\0", b""),
+        lambda x: len(x) > 30 and len(set(x)) > 8,
+        lambda x: len(x) < 16 or len(set(x)) < 5,
+    ),
 }
 
 if __name__ == "__main__":
