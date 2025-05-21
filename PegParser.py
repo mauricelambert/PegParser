@@ -196,7 +196,7 @@ Tests:
 556 passed and 0 failed.
 """
 
-__version__ = "1.1.2"
+__version__ = "1.1.3"
 __author__ = "Maurice Lambert"
 __author_email__ = "mauricelambert434@gmail.com"
 __maintainer__ = "Maurice Lambert"
@@ -6006,6 +6006,24 @@ def linux_path_false_positive(linux_path: bytes) -> bool:
         return True
     return not all(directories)
 
+def filename_false_positive(filename: bytes) -> bool:
+    if len(filename) < 8:
+        return True
+
+    extension = False
+    length = 0
+
+    for character in filename:
+        is_legit_character = (48 <= character <= 57 or 65 <= character <= 90 or 97 <= character <= 122)
+        if extension and not is_legit_character:
+            return True
+        elif is_legit_character:
+            length += 1
+        elif character == 46:
+            extension = True
+
+    return length < 7 or len(filename.rsplit(b'.', )[-1]) > 5
+
 formats = {
     "json": Format(
         "json",
@@ -6054,6 +6072,8 @@ formats = {
         "filename",
         partial(match, StandardRules.Path.filename_extension),
         lambda x: x,
+        lambda x: len(x) > 10 and len(x.split(b'.')[-1]) < 5 and not [y for y in x if not (y == 46 or 48 <= y <= 57 or 65 <= y <= 90 or 97 <= y <= 122)],
+        filename_false_positive,
     ),
     "host_port": Format(
         "host_port",
@@ -6080,8 +6100,8 @@ formats = {
         "ipv6",
         partial(match, StandardRules.Network.ipv6),
         lambda x: x,
-        lambda x: len(x) > 8,
-        lambda x: len(x) <= 3,
+        lambda x: len(x) > 15,
+        lambda x: len(x) <= 8,
     ),
     "ipv4": Format(
         "ipv4",
