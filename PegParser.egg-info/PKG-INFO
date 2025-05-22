@@ -1,6 +1,6 @@
 Metadata-Version: 2.2
 Name: PegParser
-Version: 1.1.3
+Version: 1.1.4
 Summary: This package implements a PEG (Parsing Expression Grammar) to parse syntax, i add rules to parse URL, HTTP request and response easily with security and some format like hexadecimal, base32, base64, base85, CSV, JSON (strict and permissive), system file path...
 Home-page: https://github.com/mauricelambert/PegParser
 Author: Maurice Lambert

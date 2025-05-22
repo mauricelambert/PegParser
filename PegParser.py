@@ -196,7 +196,7 @@ Tests:
 556 passed and 0 failed.
 """
 
-__version__ = "1.1.3"
+__version__ = "1.1.4"
 __author__ = "Maurice Lambert"
 __author_email__ = "mauricelambert434@gmail.com"
 __maintainer__ = "Maurice Lambert"
@@ -5974,13 +5974,24 @@ StandardRules_Types = StandardRules.Types
 StandardRules_Format = StandardRules.Format
 StandardRules_Network = StandardRules.Network
 
+
 def host_port_true_positive(host_port: bytes) -> bool:
     host, port = host_port.rsplit(b":", 1)
-    return len(host_port) > 15 and len(port) > 2 and (b"." in host or b"[" in host)
+    return (
+        len(host_port) > 15
+        and len(port) > 2
+        and (b"." in host or b"[" in host)
+    )
+
 
 def host_port_false_positive(host_port: bytes) -> bool:
     host, port = host_port.rsplit(b":", 1)
-    return len(host_port) < 10 or len(port) < 2 or not (b"." in host or b"[" in host)
+    return (
+        len(host_port) < 10
+        or len(port) < 2
+        or not (b"." in host or b"[" in host)
+    )
+
 
 def linux_path_true_positive(linux_path: bytes) -> bool:
     if len(linux_path) < 15:
@@ -5994,6 +6005,7 @@ def linux_path_true_positive(linux_path: bytes) -> bool:
         return False
     return all(46 <= character <= 122 for character in linux_path)
 
+
 def linux_path_false_positive(linux_path: bytes) -> bool:
     if len(linux_path) < 9:
         return True
@@ -6006,6 +6018,7 @@ def linux_path_false_positive(linux_path: bytes) -> bool:
         return True
     return not all(directories)
 
+
 def filename_false_positive(filename: bytes) -> bool:
     if len(filename) < 8:
         return True
@@ -6014,7 +6027,11 @@ def filename_false_positive(filename: bytes) -> bool:
     length = 0
 
     for character in filename:
-        is_legit_character = (48 <= character <= 57 or 65 <= character <= 90 or 97 <= character <= 122)
+        is_legit_character = (
+            48 <= character <= 57
+            or 65 <= character <= 90
+            or 97 <= character <= 122
+        )
         if extension and not is_legit_character:
             return True
         elif is_legit_character:
@@ -6022,7 +6039,82 @@ def filename_false_positive(filename: bytes) -> bool:
         elif character == 46:
             extension = True
 
-    return length < 7 or len(filename.rsplit(b'.', )[-1]) > 5
+    return (
+        length < 7
+        or len(
+            filename.rsplit(
+                b".",
+            )[-1]
+        )
+        > 5
+    )
+
+
+def word_false_positive(word: bytes) -> bool:
+    length = len(word)
+    if length < 7:
+        return True
+
+    characters = set()
+    first = True
+    lower_count = 0
+
+    for character in word:
+        characters.add(character if character <= 97 else (character + 32))
+        if first:
+            first = False
+            continue
+        if 97 <= character <= 122:
+            lower_count += 1
+
+    if lower_count < 6:
+        return True
+
+    characters_length = len(characters)
+    if length < 10 and characters_length > 8:
+        return True
+
+    if length < 15 and characters_length > 12:
+        return True
+
+    if length < 20 and characters_length > 16:
+        return True
+
+    return characters_length >= 20
+
+
+def word_true_positive(word: bytes) -> bool:
+    length = len(word)
+    if length < 9:
+        return False
+
+    characters = set()
+    first = True
+    lower_count = 0
+
+    for character in word:
+        characters.add(character.casefold())
+        if first:
+            first = False
+            continue
+        if 97 <= character <= 122:
+            lower_count += 1
+
+    if lower_count < 8:
+        return True
+
+    characters_length = len(characters)
+    if length < 10 and characters_length > 7:
+        return False
+
+    if length < 15 and characters_length > 10:
+        return False
+
+    if length < 20 and characters_length > 13:
+        return False
+
+    return characters_length < 17
+
 
 formats = {
     "json": Format(
@@ -6072,7 +6164,15 @@ formats = {
         "filename",
         partial(match, StandardRules.Path.filename_extension),
         lambda x: x,
-        lambda x: len(x) > 10 and len(x.split(b'.')[-1]) < 5 and not [y for y in x if not (y == 46 or 48 <= y <= 57 or 65 <= y <= 90 or 97 <= y <= 122)],
+        lambda x: len(x) > 10
+        and len(x.split(b".")[-1]) < 5
+        and not [
+            y
+            for y in x
+            if not (
+                y == 46 or 48 <= y <= 57 or 65 <= y <= 90 or 97 <= y <= 122
+            )
+        ],
         filename_false_positive,
     ),
     "host_port": Format(
@@ -6186,6 +6286,13 @@ formats = {
         lambda x: x.replace(b"\0", b""),
         lambda x: len(x) > 30 and len(set(x)) > 8,
         lambda x: len(x) < 16 or len(set(x)) < 5,
+    ),
+    "word": Format(
+        "word",
+        partial(match, StandardRules.Format.word),
+        lambda x: x,
+        word_true_positive,
+        word_false_positive,
     ),
 }
 
