@@ -32,12 +32,14 @@ Tests:
 ~# python3 -m doctest PegParser.py
 ~# python3 -m doctest -v PegParser.py
 
-51 items had no tests:
+53 items had no tests:
     PegParser
     PegParser.Format
     PegParser.Format.__eq__
     PegParser.Format.__init__
     PegParser.Format.__repr__
+    PegParser.Format.probable_false_positive
+    PegParser.Format.probable_true_positive
     PegParser.HttpRequest
     PegParser.HttpRequest.__eq__
     PegParser.HttpRequest.__init__
@@ -84,7 +86,7 @@ Tests:
     PegParser.StandardRules.Url._optional_characters_subdelims_colon_commat_slot_quest
     PegParser.get_http_content
     PegParser.match_getter
-107 items passed all tests:
+116 items passed all tests:
    3 tests in PegParser.HttpRequest.__bytes__
    3 tests in PegParser.HttpResponse.__bytes__
    3 tests in PegParser.StandardMatch.is_blank
@@ -184,19 +186,29 @@ Tests:
    3 tests in PegParser.csv_file_parse
    2 tests in PegParser.csv_files_parse
    1 tests in PegParser.csv_parse
+   2 tests in PegParser.filename_false_positive
    2 tests in PegParser.get_json
    1 tests in PegParser.get_json_from_ordered_matchs
    2 tests in PegParser.get_matchs
    2 tests in PegParser.get_ordered_matchs
+   2 tests in PegParser.host_port_false_positive
+   2 tests in PegParser.host_port_true_positive
+   2 tests in PegParser.linux_path_false_positive
+   2 tests in PegParser.linux_path_true_positive
    4 tests in PegParser.match
    3 tests in PegParser.mjson_file_parse
    1 tests in PegParser.parse_http_request
    1 tests in PegParser.parse_http_response
-556 tests in 158 items.
-556 passed and 0 failed.
+   2 tests in PegParser.uri_false_positive
+   2 tests in PegParser.uri_true_positive
+   2 tests in PegParser.word_false_positive
+   2 tests in PegParser.word_true_positive
+574 tests in 169 items.
+574 passed and 0 failed.
+Test passed.
 """
 
-__version__ = "1.1.4"
+__version__ = "1.1.5"
 __author__ = "Maurice Lambert"
 __author_email__ = "mauricelambert434@gmail.com"
 __maintainer__ = "Maurice Lambert"
@@ -5976,6 +5988,14 @@ StandardRules_Network = StandardRules.Network
 
 
 def host_port_true_positive(host_port: bytes) -> bool:
+    """
+    >>> host_port_true_positive(b'1456:45')
+    False
+    >>> host_port_true_positive(b'update.windows.xyz:443')
+    True
+    >>>
+    """
+
     host, port = host_port.rsplit(b":", 1)
     return (
         len(host_port) > 15
@@ -5985,6 +6005,14 @@ def host_port_true_positive(host_port: bytes) -> bool:
 
 
 def host_port_false_positive(host_port: bytes) -> bool:
+    """
+    >>> host_port_false_positive(b'1456:45')
+    True
+    >>> host_port_false_positive(b'update.windows.xyz:443')
+    False
+    >>>
+    """
+
     host, port = host_port.rsplit(b":", 1)
     return (
         len(host_port) < 10
@@ -5994,12 +6022,20 @@ def host_port_false_positive(host_port: bytes) -> bool:
 
 
 def linux_path_true_positive(linux_path: bytes) -> bool:
+    """
+    >>> linux_path_true_positive(b'windows/update.php')
+    True
+    >>> linux_path_true_positive(b'/test/o+e...t')
+    False
+    >>>
+    """
+
     if len(linux_path) < 15:
         return False
     splitted = linux_path.split(b"/")
     splitted_length = len(splitted)
     if splitted_length < 3:
-        return False
+        return all((97 <= x <= 122 or x == 46 or x == 47) for x in linux_path)
     root, *directories, file = splitted
     if not root and splitted_length < 4:
         return False
@@ -6007,12 +6043,22 @@ def linux_path_true_positive(linux_path: bytes) -> bool:
 
 
 def linux_path_false_positive(linux_path: bytes) -> bool:
+    """
+    >>> linux_path_false_positive(b'windows/update.php')
+    False
+    >>> linux_path_false_positive(b'/test/o+e...t')
+    True
+    >>>
+    """
+
     if len(linux_path) < 9:
         return True
     splitted = linux_path.split(b"/")
     splitted_length = len(splitted)
     if splitted_length < 3:
-        return True
+        return not all(
+            (97 <= x <= 122 or x == 46 or x == 47) for x in linux_path
+        )
     root, *directories, file = splitted
     if not root and splitted_length < 4:
         return True
@@ -6020,6 +6066,14 @@ def linux_path_false_positive(linux_path: bytes) -> bool:
 
 
 def filename_false_positive(filename: bytes) -> bool:
+    """
+    >>> filename_false_positive(b'update.php')
+    False
+    >>> filename_false_positive(b'e...t')
+    True
+    >>>
+    """
+
     if len(filename) < 8:
         return True
 
@@ -6051,6 +6105,14 @@ def filename_false_positive(filename: bytes) -> bool:
 
 
 def word_false_positive(word: bytes) -> bool:
+    """
+    >>> word_false_positive(b'GetSystemTime')
+    False
+    >>> word_false_positive(b'abcdefgh')
+    True
+    >>>
+    """
+
     length = len(word)
     if length < 7:
         return True
@@ -6060,17 +6122,22 @@ def word_false_positive(word: bytes) -> bool:
     lower_count = 0
 
     for character in word:
-        characters.add(character if character <= 97 else (character + 32))
-        if first:
-            first = False
-            continue
         if 97 <= character <= 122:
+            characters.add(character)
+            if first:
+                first = False
+                continue
             lower_count += 1
+        else:
+            characters.add((character + 32))
 
     if lower_count < 6:
         return True
 
     characters_length = len(characters)
+    if characters_length == length:
+        return True
+
     if length < 10 and characters_length > 8:
         return True
 
@@ -6084,6 +6151,14 @@ def word_false_positive(word: bytes) -> bool:
 
 
 def word_true_positive(word: bytes) -> bool:
+    """
+    >>> word_true_positive(b'GetSystemTime')
+    True
+    >>> word_true_positive(b'abcdefgh')
+    False
+    >>>
+    """
+
     length = len(word)
     if length < 9:
         return False
@@ -6093,17 +6168,22 @@ def word_true_positive(word: bytes) -> bool:
     lower_count = 0
 
     for character in word:
-        characters.add(character.casefold())
-        if first:
-            first = False
-            continue
         if 97 <= character <= 122:
+            characters.add(character)
+            if first:
+                first = False
+                continue
             lower_count += 1
+        else:
+            characters.add(character - 32)
 
     if lower_count < 8:
         return True
 
     characters_length = len(characters)
+    if characters_length == length:
+        return False
+
     if length < 10 and characters_length > 7:
         return False
 
@@ -6114,6 +6194,40 @@ def word_true_positive(word: bytes) -> bool:
         return False
 
     return characters_length < 17
+
+
+def uri_false_positive(uri: bytes) -> bytes:
+    """
+    >>> uri_false_positive(b'ftp://test.com/')
+    False
+    >>> uri_false_positive(b'test+test:test@com')
+    True
+    >>>
+    """
+
+    for character in uri:
+        if character == 58:
+            break
+        elif not (97 <= character <= 122 or 65 <= character <= 90):
+            return True
+    return b"://" not in uri or b":" in uri[-6:]
+
+
+def uri_true_positive(uri: bytes) -> bytes:
+    """
+    >>> uri_true_positive(b'http://test.com/')
+    True
+    >>> uri_true_positive(b'test+test:test@com')
+    False
+    >>>
+    """
+
+    for character in uri:
+        if character == 58:
+            break
+        elif not (97 <= character <= 122 or 65 <= character <= 90):
+            return False
+    return b"://" in uri and b":" not in uri[-10:] and b":" not in uri[:4]
 
 
 formats = {
@@ -6143,8 +6257,8 @@ formats = {
         "uri",
         partial(match, StandardRules.Url.full),
         lambda x: x,
-        lambda x: b":" not in x[-10:] and b":" not in x[:4],
-        lambda x: b":" in x[-6:] or b":" in x[:3],
+        uri_true_positive,
+        uri_false_positive,
     ),
     "windows_path": Format(
         "windows_path",
